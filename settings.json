@@ -1,0 +1,195 @@
+{
+  "services": [
+    {
+      "id": "govt-form",
+      "icon": "GP",
+      "title": "Govt Form Print",
+      "description": "Print blank government form templates without upload.",
+      "defaultPages": 1,
+      "mode": "template",
+      "imageUrl": "",
+      "enabled": true,
+      "kioskIds": [],
+      "pricing": {
+        "bw": 3,
+        "color": 12
+      },
+      "templates": [
+        {
+          "id": "birth-certificate",
+          "title": "Birth Certificate Form",
+          "description": "Blank Form No. 5 birth certificate template.",
+          "pages": 1,
+          "fields": [
+            "Name",
+            "Sex",
+            "Date of birth",
+            "Place of birth",
+            "Mother name",
+            "Father name"
+          ],
+          "imageUrl": "https://www.pdffiller.com/preview/29/559/29559281/large.png"
+        },
+        {
+          "id": "voter-form-6",
+          "title": "Form 6",
+          "description": "Blank voter registration application template.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "Age / DOB",
+            "Address",
+            "Constituency",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "voter-form-8",
+          "title": "Form 8",
+          "description": "Blank voter correction or shifting application template.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "EPIC No.",
+            "Correction type",
+            "Correct details",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "domicile-certificate",
+          "title": "Domicile Certificate Form",
+          "description": "Blank domicile certificate application format.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "DOB",
+            "Address",
+            "Years of residence",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "income-certificate",
+          "title": "Income Certificate Form",
+          "description": "Blank income certificate request template.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "Occupation",
+            "Annual income",
+            "Purpose",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "caste-certificate",
+          "title": "Caste Certificate Form",
+          "description": "Blank caste certificate application template.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "Caste",
+            "Sub caste",
+            "Address",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        }
+      ]
+    },
+    {
+      "id": "college-form",
+      "icon": "CF",
+      "title": "College Form Print",
+      "description": "Print admission, exam, certificate, and fee forms.",
+      "defaultPages": 1,
+      "mode": "template",
+      "imageUrl": "",
+      "enabled": true,
+      "kioskIds": [],
+      "pricing": {
+        "bw": 3,
+        "color": 12
+      },
+      "templates": [
+        {
+          "id": "admission-form",
+          "title": "Admission Form",
+          "description": "Student admission details and guardian section.",
+          "pages": 1,
+          "fields": [
+            "Student",
+            "Course",
+            "DOB",
+            "Mobile",
+            "Signature"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "exam-registration",
+          "title": "Exam Registration Form",
+          "description": "Semester exam subject and fee declaration.",
+          "pages": 1,
+          "fields": [
+            "Student",
+            "Roll No.",
+            "Semester",
+            "Subjects",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "scholarship-form",
+          "title": "Scholarship Form",
+          "description": "Student scholarship request and document list.",
+          "pages": 1,
+          "fields": [
+            "Student",
+            "Course",
+            "Income",
+            "Category",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "bonafide-request",
+          "title": "Bonafide Certificate Request",
+          "description": "Certificate request form for college office.",
+          "pages": 1,
+          "fields": [
+            "Student",
+            "Roll No.",
+            "Course",
+            "Purpose",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        }
+      ]
+    }
+  ],
+  "pricing": {
+    "govt-form": {
+      "bw": 3,
+      "color": 12
+    },
+    "college-form": {
+      "bw": 3,
+      "color": 12
+    }
+  },
+  "config": {
+    "version": 1781433405852,
+    "updatedAt": "2026-06-14T10:36:45.852Z",
+    "reason": "services-updated"
+  },
+  "updatedAt": "2026-06-14T10:36:45.852Z"
+}

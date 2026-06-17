@@ -1,0 +1,353 @@
+{
+  "jobs": [
+    {
+      "jobId": "JOB-1104",
+      "kioskId": "KIOSK-BANK-01",
+      "service": "govt-form",
+      "fileName": "birth-certificate.html",
+      "fileType": "HTML",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 3,
+      "paymentStatus": "Payment Success",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-14T04:30:52.115Z",
+      "completedAt": "2026-06-14T10:32:45.977Z",
+      "rate": 3,
+      "failedAt": "2026-06-14T05:31:33.552Z",
+      "failureReason": "Windows cannot print this file type because no application with a Print command is associated with it."
+    },
+    {
+      "jobId": "JOB-1105",
+      "kioskId": "KIOSK-BANK-01",
+      "service": "print",
+      "fileName": "IMG-20260612-WA0000.jpg",
+      "fileType": "JPG",
+      "pageCount": 1,
+      "copies": 2,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 4,
+      "paymentStatus": "Payment Success",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-14T05:42:38.666Z",
+      "completedAt": "2026-06-14T05:43:13.748Z",
+      "rate": 2
+    }
+  ],
+  "payments": [
+    {
+      "paymentId": "PAY-1781411452374",
+      "gateway": "razorpay",
+      "jobId": "JOB-1104",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T1Ncv3rlDU25Lz",
+      "status": "Success",
+      "createdAt": "2026-06-14T04:30:52.374Z",
+      "razorpayPaymentId": "pay_T1NdAB63qCJZz4",
+      "razorpaySignature": "0d7126a0ced71bd1da97c7307ad54b3e281388e251ff1a60ece1e0624f1ff304",
+      "paidAt": "2026-06-14T04:31:21.060Z"
+    },
+    {
+      "paymentId": "PAY-1781413785432",
+      "gateway": "razorpay",
+      "jobId": "JOB-1104",
+      "amount": 3,
+      "amountInPaise": 300,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T1OHzi1fnAGMQz",
+      "status": "Success",
+      "createdAt": "2026-06-14T05:09:45.432Z",
+      "razorpayPaymentId": "pay_T1OI9HJQcDd8gC",
+      "razorpaySignature": "1d09011e92de645f47d2e581f0155c5cb90459d51510741c03718682e147e814",
+      "paidAt": "2026-06-14T05:10:12.531Z"
+    },
+    {
+      "paymentId": "PAY-1781414585259",
+      "gateway": "razorpay",
+      "jobId": "JOB-1104",
+      "amount": 3,
+      "amountInPaise": 300,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T1OW4x1RgBKjVA",
+      "status": "Success",
+      "createdAt": "2026-06-14T05:23:05.259Z",
+      "razorpayPaymentId": "pay_T1OWBaMmaDfTpI",
+      "razorpaySignature": "749d97240d2b11f0c79d191446ccdb328f1a65c90568042e46c12b27260b8649",
+      "paidAt": "2026-06-14T05:23:26.777Z"
+    },
+    {
+      "paymentId": "PAY-1781414898499",
+      "gateway": "razorpay",
+      "jobId": "JOB-1104",
+      "amount": 3,
+      "amountInPaise": 300,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T1ObagmRSM97gd",
+      "status": "Success",
+      "createdAt": "2026-06-14T05:28:18.499Z",
+      "razorpayPaymentId": "pay_T1ObhnWj08Ffd2",
+      "razorpaySignature": "33002de6d4c45b3194d446265a96e340acacd5f64c346d086d6624ad6b46d4f6",
+      "paidAt": "2026-06-14T05:28:40.683Z"
+    },
+    {
+      "paymentId": "PAY-1781415045719",
+      "gateway": "razorpay",
+      "jobId": "JOB-1104",
+      "amount": 3,
+      "amountInPaise": 300,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T1OeBZbdXYKduh",
+      "status": "Success",
+      "createdAt": "2026-06-14T05:30:45.719Z",
+      "razorpayPaymentId": "pay_T1OeJJjLRwopPR",
+      "razorpaySignature": "79917f9aabc30977803ac056609129084cb6fe24255a3c0b16eaebade041d94f",
+      "paidAt": "2026-06-14T05:31:19.092Z"
+    },
+    {
+      "paymentId": "PAY-1781415619293",
+      "gateway": "razorpay",
+      "jobId": "JOB-1104",
+      "amount": 3,
+      "amountInPaise": 300,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T1OoHZzbFAmnWd",
+      "status": "Success",
+      "createdAt": "2026-06-14T05:40:19.294Z",
+      "razorpayPaymentId": "pay_T1OoOY76am2x4U",
+      "razorpaySignature": "df14303c13328db42d4adc0d2b7fcaf2b0c0c5a7e2be9f787db78629f4a72670",
+      "paidAt": "2026-06-14T05:40:40.793Z"
+    },
+    {
+      "paymentId": "PAY-1781415759382",
+      "gateway": "razorpay",
+      "jobId": "JOB-1105",
+      "amount": 4,
+      "amountInPaise": 400,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T1OqkOSAGTYYLQ",
+      "status": "Success",
+      "createdAt": "2026-06-14T05:42:39.382Z",
+      "razorpayPaymentId": "pay_T1OqpLp67hsjHU",
+      "razorpaySignature": "fce7f858e3a1c1b2c3197e1b839f49587ead85fd777e0e2a6f228b940d4754cb",
+      "paidAt": "2026-06-14T05:43:00.963Z"
+    }
+  ],
+  "services": [
+    {
+      "id": "govt-form",
+      "icon": "GP",
+      "title": "Govt Form Print",
+      "description": "Print blank government form templates without upload.",
+      "defaultPages": 1,
+      "mode": "template",
+      "imageUrl": "",
+      "enabled": true,
+      "kioskIds": [],
+      "pricing": {
+        "bw": 3,
+        "color": 12
+      },
+      "templates": [
+        {
+          "id": "birth-certificate",
+          "title": "Birth Certificate Form",
+          "description": "Blank Form No. 5 birth certificate template.",
+          "pages": 1,
+          "fields": [
+            "Name",
+            "Sex",
+            "Date of birth",
+            "Place of birth",
+            "Mother name",
+            "Father name"
+          ],
+          "imageUrl": "https://www.pdffiller.com/preview/29/559/29559281/large.png"
+        },
+        {
+          "id": "voter-form-6",
+          "title": "Form 6",
+          "description": "Blank voter registration application template.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "Age / DOB",
+            "Address",
+            "Constituency",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "voter-form-8",
+          "title": "Form 8",
+          "description": "Blank voter correction or shifting application template.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "EPIC No.",
+            "Correction type",
+            "Correct details",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "domicile-certificate",
+          "title": "Domicile Certificate Form",
+          "description": "Blank domicile certificate application format.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "DOB",
+            "Address",
+            "Years of residence",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "income-certificate",
+          "title": "Income Certificate Form",
+          "description": "Blank income certificate request template.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "Occupation",
+            "Annual income",
+            "Purpose",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "caste-certificate",
+          "title": "Caste Certificate Form",
+          "description": "Blank caste certificate application template.",
+          "pages": 1,
+          "fields": [
+            "Applicant",
+            "Caste",
+            "Sub caste",
+            "Address",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        }
+      ]
+    },
+    {
+      "id": "college-form",
+      "icon": "CF",
+      "title": "College Form Print",
+      "description": "Print admission, exam, certificate, and fee forms.",
+      "defaultPages": 1,
+      "mode": "template",
+      "imageUrl": "",
+      "enabled": true,
+      "kioskIds": [],
+      "pricing": {
+        "bw": 3,
+        "color": 12
+      },
+      "templates": [
+        {
+          "id": "admission-form",
+          "title": "Admission Form",
+          "description": "Student admission details and guardian section.",
+          "pages": 1,
+          "fields": [
+            "Student",
+            "Course",
+            "DOB",
+            "Mobile",
+            "Signature"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "exam-registration",
+          "title": "Exam Registration Form",
+          "description": "Semester exam subject and fee declaration.",
+          "pages": 1,
+          "fields": [
+            "Student",
+            "Roll No.",
+            "Semester",
+            "Subjects",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "scholarship-form",
+          "title": "Scholarship Form",
+          "description": "Student scholarship request and document list.",
+          "pages": 1,
+          "fields": [
+            "Student",
+            "Course",
+            "Income",
+            "Category",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        },
+        {
+          "id": "bonafide-request",
+          "title": "Bonafide Certificate Request",
+          "description": "Certificate request form for college office.",
+          "pages": 1,
+          "fields": [
+            "Student",
+            "Roll No.",
+            "Course",
+            "Purpose",
+            "Mobile"
+          ],
+          "imageUrl": ""
+        }
+      ]
+    }
+  ],
+  "pricing": {
+    "govt-form": {
+      "bw": 3,
+      "color": 12
+    },
+    "college-form": {
+      "bw": 3,
+      "color": 12
+    }
+  },
+  "kiosks": [
+    {
+      "kioskId": "KIOSK-BANK-01",
+      "name": "DESKTOP-Q80UK4K",
+      "branch": "Local Branch",
+      "status": "online",
+      "printer": "unknown",
+      "scanner": "unknown",
+      "appVersion": "1.0.0",
+      "lastOnline": "2026-06-14T04:28:38.860Z"
+    }
+  ],
+  "refunds": [],
+  "config": {
+    "version": 1781433405852,
+    "updatedAt": "2026-06-14T10:36:45.852Z",
+    "reason": "services-updated"
+  },
+  "updatedAt": "2026-06-14T10:36:45.863Z"
+}

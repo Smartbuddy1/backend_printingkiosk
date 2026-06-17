@@ -420,8 +420,14 @@ function servicesForKiosk(kioskId = "") {
   return db.services.filter((service) => !id || !service.kioskIds.length || service.kioskIds.includes(id));
 }
 
+function kioskForConfig(kioskId = "") {
+  const id = String(kioskId || "").trim().toUpperCase();
+  return db.kiosks.find((kiosk) => String(kiosk.kioskId || "").toUpperCase() === id) || null;
+}
+
 function kioskConfigResponse(kioskId = "") {
   const filteredServices = servicesForKiosk(kioskId);
+  const kiosk = kioskForConfig(kioskId);
   const pricing = Object.fromEntries(
     filteredServices.map((service) => [
       service.id,
@@ -431,6 +437,16 @@ function kioskConfigResponse(kioskId = "") {
 
   return {
     kioskId: kioskId || null,
+    kiosk: kiosk ? {
+      kioskId: kiosk.kioskId,
+      name: kiosk.name,
+      branch: kiosk.branch,
+      status: kiosk.status,
+      printer: kiosk.printer,
+      scanner: kiosk.scanner,
+      appVersion: kiosk.appVersion,
+      lastOnline: kiosk.lastOnline
+    } : null,
     config: db.config,
     services: filteredServices.map((service) => ({
       ...service,

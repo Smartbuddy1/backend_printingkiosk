@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { URL } = require("node:url");
 const QRCode = require("qrcode");
-const { loadEnv } = require("../scripts/load-env");
+const { loadEnv } = require("./load-env");
 
 loadEnv();
 const rdsStore = require("./rds-store");

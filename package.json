@@ -1,0 +1,17 @@
+{
+  "name": "backend-printingkiosk",
+  "version": "1.0.0",
+  "description": "Backend API for the printing kiosk.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "pg": "^8.21.0",
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

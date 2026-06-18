@@ -1213,6 +1213,51 @@ function isoNow() {
   return new Date().toISOString();
 }
 
+function normalizeActivationDeviceId(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 128);
+}
+
+function validateKioskActivationRequest(body = {}) {
+  const kioskId = String(body.kioskId || "").trim().toUpperCase();
+  const setupCode = String(body.setupCode || "").trim().toUpperCase();
+  const activationDeviceId = normalizeActivationDeviceId(body.deviceId || body.activationDeviceId || body.machineId || "");
+  const kiosk = db.kiosks.find((item) => String(item.kioskId || "").toUpperCase() === kioskId);
+
+  if (!kioskId || !setupCode || !activationDeviceId) {
+    return {
+      status: 400,
+      error: "Kiosk ID, setup code, and device identity are required. Use the latest mini-PC installer."
+    };
+  }
+
+  if (!kiosk || String(kiosk.setupCode || "").toUpperCase() !== setupCode) {
+    return {
+      status: 403,
+      error: "Invalid kiosk ID or setup code."
+    };
+  }
+
+  const existingDeviceId = normalizeActivationDeviceId(kiosk.activationDeviceId || kiosk.deviceId || "");
+  if (kiosk.activatedAt && existingDeviceId && existingDeviceId !== activationDeviceId) {
+    return {
+      status: 409,
+      error: `Kiosk ${kiosk.kioskId} is already activated on another mini PC. Create a new kiosk ID or reset this kiosk before installing it on different hardware.`
+    };
+  }
+
+  return {
+    kiosk,
+    kioskId,
+    setupCode,
+    activationDeviceId,
+    existingDeviceId
+  };
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -1285,6 +1330,7 @@ function normalizeSuperAdminKiosk(record = {}, existing = {}) {
     appVersion: String(next.appVersion || "1.0.0").trim(),
     setupCode,
     activatedAt: next.activatedAt || existing.activatedAt || null,
+    activationDeviceId: normalizeActivationDeviceId(next.activationDeviceId || existing.activationDeviceId || next.deviceId || ""),
     lastOnline: next.lastOnline || isoNow()
   };
 }
@@ -1688,21 +1734,36 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, kioskConfigResponse(url.searchParams.get("kioskId") || ""));
   }
 
+  if (req.method === "POST" && url.pathname === "/api/kiosk/setup/check") {
+    const validation = validateKioskActivationRequest(body);
+    if (validation.error) {
+      return json(res, validation.status, { error: validation.error });
+    }
+
+    return json(res, 200, {
+      ok: true,
+      kiosk: {
+        kioskId: validation.kiosk.kioskId,
+        name: validation.kiosk.name,
+        branch: validation.kiosk.branch,
+        status: validation.kiosk.status,
+        activatedAt: validation.kiosk.activatedAt || null,
+        alreadyActivated: Boolean(validation.kiosk.activatedAt),
+        deviceLocked: Boolean(validation.existingDeviceId)
+      }
+    });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/kiosk/setup/activate") {
-    const kioskId = String(body.kioskId || "").trim().toUpperCase();
-    const setupCode = String(body.setupCode || "").trim().toUpperCase();
-    const kiosk = db.kiosks.find((item) => String(item.kioskId || "").toUpperCase() === kioskId);
-
-    if (!kioskId || !setupCode) {
-      return json(res, 400, { error: "Kiosk ID and setup code are required." });
+    const validation = validateKioskActivationRequest(body);
+    if (validation.error) {
+      return json(res, validation.status, { error: validation.error });
     }
 
-    if (!kiosk || String(kiosk.setupCode || "").toUpperCase() !== setupCode) {
-      return json(res, 403, { error: "Invalid kiosk ID or setup code." });
-    }
-
+    const { kiosk, activationDeviceId, existingDeviceId } = validation;
     kiosk.status = "online";
-    kiosk.activatedAt = isoNow();
+    kiosk.activatedAt = kiosk.activatedAt || isoNow();
+    kiosk.activationDeviceId = existingDeviceId || activationDeviceId;
     kiosk.lastOnline = isoNow();
     saveData();
 
@@ -1713,7 +1774,8 @@ const server = http.createServer(async (req, res) => {
         name: kiosk.name,
         branch: kiosk.branch,
         status: kiosk.status,
-        activatedAt: kiosk.activatedAt
+        activatedAt: kiosk.activatedAt,
+        deviceLocked: true
       }
     });
   }

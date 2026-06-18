@@ -30,6 +30,7 @@ const SUPER_ADMIN_CREDENTIALS = {
   email: process.env.SUPER_ADMIN_EMAIL || process.env.SUPER_EMAIL || "superadmin@printingkiosk.local",
   password: process.env.SUPER_ADMIN_PASSWORD || process.env.SUPER_PASSWORD || "superdemo1234"
 };
+const DEFAULT_KIOSK_ADMIN_ID = process.env.KIOSK_ADMIN_ID || "default-admin";
 const FRONTEND_FILES = new Set([
   "index.html",
   "admin.html",
@@ -281,6 +282,59 @@ function normalizePricing(pricing, services = DEFAULT_SERVICES) {
   return nextPricing;
 }
 
+function normalizeAdminId(value, fallback = DEFAULT_KIOSK_ADMIN_ID) {
+  return slug(value || fallback, fallback);
+}
+
+function defaultKioskAdmin() {
+  return {
+    adminId: normalizeAdminId(DEFAULT_KIOSK_ADMIN_ID),
+    name: process.env.KIOSK_ADMIN_NAME || "Kiosk Admin",
+    email: ADMIN_CREDENTIALS.email,
+    password: ADMIN_CREDENTIALS.password,
+    status: "active",
+    kioskIds: []
+  };
+}
+
+function normalizeKioskAdmin(record = {}, existing = {}) {
+  const next = { ...existing, ...record };
+  const adminId = normalizeAdminId(existing.adminId || next.adminId || next.email || DEFAULT_KIOSK_ADMIN_ID);
+  const password = record.password === "" || record.password == null
+    ? existing.password || next.password
+    : record.password;
+
+  return {
+    ...next,
+    adminId,
+    name: String(next.name || "Kiosk Admin").trim(),
+    email: String(next.email || "").trim().toLowerCase(),
+    password: String(password || "").trim(),
+    status: String(next.status || "active").trim().toLowerCase() === "disabled" ? "disabled" : "active",
+    kioskIds: Array.isArray(next.kioskIds)
+      ? next.kioskIds.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean)
+      : []
+  };
+}
+
+function normalizeKioskAdmins(records) {
+  const source = Array.isArray(records) && records.length ? records : [defaultKioskAdmin()];
+  const admins = source
+    .map((record) => normalizeKioskAdmin(record))
+    .filter((admin) => admin.email && admin.password);
+
+  if (!admins.some((admin) => admin.adminId === normalizeAdminId(DEFAULT_KIOSK_ADMIN_ID))) {
+    admins.unshift(defaultKioskAdmin());
+  }
+
+  const seen = new Set();
+  return admins.filter((admin) => {
+    if (seen.has(admin.adminId)) return false;
+    seen.add(admin.adminId);
+    return true;
+  });
+}
+
 function loadSettings() {
   try {
     const settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8"));
@@ -307,13 +361,22 @@ function loadData() {
 
 function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
   const persistedServices = normalizeServices(persistedData.services);
+  const kioskAdmins = normalizeKioskAdmins(persistedData.kioskAdmins);
+  const fallbackAdminId = kioskAdmins[0]?.adminId || DEFAULT_KIOSK_ADMIN_ID;
+  const persistedKiosks = Array.isArray(persistedData.kiosks) && persistedData.kiosks.length
+    ? persistedData.kiosks
+    : [defaultKiosk()];
 
   return {
     jobs: Array.isArray(persistedData.jobs) ? persistedData.jobs : [],
     payments: Array.isArray(persistedData.payments) ? persistedData.payments : [],
     services: persistedServices,
     pricing: normalizePricing(persistedData.pricing || persistedSettings.pricing, persistedServices),
-    kiosks: Array.isArray(persistedData.kiosks) && persistedData.kiosks.length ? persistedData.kiosks : [defaultKiosk()],
+    kiosks: persistedKiosks.map((kiosk) => normalizeSuperAdminKiosk({
+      adminId: kiosk.adminId || fallbackAdminId,
+      ...kiosk
+    })),
+    kioskAdmins,
     refunds: Array.isArray(persistedData.refunds) ? persistedData.refunds : [],
     config: normalizeConfigMeta(persistedData.config || persistedSettings.config, persistedData.updatedAt)
   };
@@ -324,6 +387,7 @@ function defaultKiosk() {
     kioskId: process.env.KIOSK_ID || "KIOSK-BANK-01",
     name: process.env.KIOSK_NAME || os.hostname(),
     branch: process.env.KIOSK_BRANCH || "Local Branch",
+    adminId: process.env.KIOSK_ADMIN_ID || DEFAULT_KIOSK_ADMIN_ID,
     status: "online",
     printer: "unknown",
     scanner: "unknown",
@@ -367,6 +431,7 @@ function dataSnapshot() {
     services: db.services,
     pricing: db.pricing,
     kiosks: db.kiosks,
+    kioskAdmins: db.kioskAdmins,
     refunds: db.refunds,
     config: db.config,
     updatedAt: new Date().toISOString()
@@ -575,10 +640,39 @@ function credentialsMatch(body, expected) {
   return email === String(expected.email || "").trim().toLowerCase() && password === String(expected.password || "");
 }
 
-function createAdminSession(role) {
+function publicKioskAdmin(admin = {}) {
+  return {
+    adminId: admin.adminId,
+    name: admin.name,
+    email: admin.email,
+    status: admin.status,
+    kioskIds: Array.isArray(admin.kioskIds) ? admin.kioskIds : []
+  };
+}
+
+function findKioskAdminByCredentials(body = {}) {
+  const email = String(body.email || "").trim().toLowerCase();
+  const password = String(body.password || "");
+
+  return db.kioskAdmins.find((admin) => (
+    admin.status !== "disabled" &&
+    admin.email === email &&
+    admin.password === password
+  )) || null;
+}
+
+function findKioskAdminById(adminId = "") {
+  const id = normalizeAdminId(adminId);
+  return db.kioskAdmins.find((admin) => admin.adminId === id) || null;
+}
+
+function createAdminSession(role, account = {}) {
   const token = crypto.randomBytes(32).toString("hex");
   adminSessions.set(token, {
     role,
+    adminId: account.adminId || "",
+    email: account.email || "",
+    name: account.name || "",
     expiresAt: Date.now() + 8 * 60 * 60 * 1000
   });
   return token;
@@ -607,6 +701,122 @@ function requireAdminSession(req, res, role) {
   }
 
   return true;
+}
+
+function kioskIdsForAdmin(session = {}) {
+  if (session.role === "super-admin") {
+    return new Set(db.kiosks.map((kiosk) => String(kiosk.kioskId || "").toUpperCase()));
+  }
+
+  const account = findKioskAdminById(session.adminId);
+  if (!account || account.status === "disabled") return new Set();
+
+  const explicit = new Set((account.kioskIds || []).map((id) => String(id || "").toUpperCase()).filter(Boolean));
+  const owned = db.kiosks
+    .filter((kiosk) => normalizeAdminId(kiosk.adminId) === account.adminId)
+    .map((kiosk) => String(kiosk.kioskId || "").toUpperCase());
+
+  return new Set([...explicit, ...owned]);
+}
+
+function kiosksForAdmin(session = {}) {
+  const allowed = kioskIdsForAdmin(session);
+  return db.kiosks.filter((kiosk) => allowed.has(String(kiosk.kioskId || "").toUpperCase()));
+}
+
+function adminCanAccessKiosk(session = {}, kioskId = "") {
+  return kioskIdsForAdmin(session).has(String(kioskId || "").toUpperCase());
+}
+
+function jobsForAdmin(session = {}) {
+  const allowed = kioskIdsForAdmin(session);
+  return db.jobs.filter((job) => allowed.has(String(job.kioskId || "").toUpperCase()));
+}
+
+function paymentsForJobs(jobs = []) {
+  const jobIds = new Set(jobs.map((job) => String(job.jobId || "")));
+  return db.payments.filter((payment) => jobIds.has(String(payment.jobId || "")));
+}
+
+function refundsForJobs(jobs = [], payments = []) {
+  const jobIds = new Set(jobs.map((job) => String(job.jobId || "")));
+  const paymentIds = new Set(payments.map((payment) => String(payment.paymentId || "")));
+  return db.refunds.filter((refund) => jobIds.has(String(refund.jobId || "")) || paymentIds.has(String(refund.paymentId || "")));
+}
+
+function servicesForAdmin(session = {}, kioskId = "") {
+  const allowed = kioskIdsForAdmin(session);
+  const requestedKioskId = String(kioskId || "").trim().toUpperCase();
+
+  if (requestedKioskId) {
+    if (!allowed.has(requestedKioskId)) return [];
+    return db.services.filter((service) => !service.kioskIds.length || service.kioskIds.includes(requestedKioskId));
+  }
+
+  return db.services.filter((service) => (
+    !service.kioskIds.length ||
+    service.kioskIds.some((id) => allowed.has(String(id || "").toUpperCase()))
+  ));
+}
+
+function pricingForServices(serviceList = []) {
+  return Object.fromEntries(serviceList.map((service) => [
+    service.id,
+    db.pricing[service.id] || service.pricing
+  ]));
+}
+
+function mergeAdminServices(session = {}, incomingServices = [], incomingPricing = null) {
+  const allowedKioskIds = kioskIdsForAdmin(session);
+  if (!allowedKioskIds.size) {
+    return null;
+  }
+
+  const allowedExistingIds = new Set(servicesForAdmin(session).map((service) => service.id));
+  const normalizedIncoming = normalizeServices(incomingServices)
+    .map((service) => {
+      const requestedIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((id) => String(id || "").toUpperCase()) : [];
+      const scopedIds = requestedIds.length
+        ? requestedIds.filter((id) => allowedKioskIds.has(id))
+        : [];
+
+      return {
+        ...service,
+        kioskIds: requestedIds.length ? scopedIds : service.kioskIds
+      };
+    })
+    .filter((service) => {
+      if (!allowedExistingIds.has(service.id)) return true;
+      if (!service.kioskIds.length) return true;
+      return service.kioskIds.some((id) => allowedKioskIds.has(String(id || "").toUpperCase()));
+    });
+
+  const incomingIds = new Set(normalizedIncoming.map((service) => service.id));
+  db.services = [
+    ...db.services.filter((service) => !(allowedExistingIds.has(service.id) && incomingIds.has(service.id))),
+    ...normalizedIncoming
+  ];
+
+  const scopedPricing = pricingForServices(normalizedIncoming);
+  const requestedScopedPricing = {};
+  if (incomingPricing && typeof incomingPricing === "object") {
+    Object.entries(incomingPricing).forEach(([serviceId, rates]) => {
+      if (incomingIds.has(serviceId)) {
+        requestedScopedPricing[serviceId] = rates;
+      }
+    });
+  }
+  db.pricing = normalizePricing({
+    ...db.pricing,
+    ...scopedPricing,
+    ...requestedScopedPricing
+  }, db.services);
+  db.services = db.services.map((service) => ({
+    ...service,
+    pricing: db.pricing[service.id] || service.pricing
+  }));
+
+  return normalizedIncoming;
 }
 
 function isAllowedServiceImage(file) {
@@ -1066,6 +1276,7 @@ function normalizeSuperAdminKiosk(record = {}, existing = {}) {
     kioskId,
     name: String(next.name || "New Kiosk").trim(),
     branch: String(next.branch || "Unassigned Branch").trim(),
+    adminId: normalizeAdminId(next.adminId || DEFAULT_KIOSK_ADMIN_ID),
     status: ["online", "offline", "maintenance"].includes(String(next.status || "").toLowerCase())
       ? String(next.status).toLowerCase()
       : "offline",
@@ -1122,6 +1333,14 @@ function superAdminCollectionConfig(collection) {
         db.kiosks = items;
       },
       normalize: normalizeSuperAdminKiosk
+    },
+    kioskAdmins: {
+      key: "adminId",
+      get: () => db.kioskAdmins,
+      set: (items) => {
+        db.kioskAdmins = normalizeKioskAdmins(items);
+      },
+      normalize: normalizeKioskAdmin
     },
     refunds: {
       key: "refundId",
@@ -1192,6 +1411,7 @@ function superAdminSummary() {
   const templates = db.services.reduce((sum, service) => sum + (service.templates?.length || 0), 0);
 
   return {
+    kioskAdmins: db.kioskAdmins.length,
     kiosks: db.kiosks.length,
     services: db.services.length,
     templates,
@@ -1207,6 +1427,7 @@ function superAdminSummary() {
 
 function buildSuperAdminHierarchy() {
   return db.kiosks.map((kiosk) => {
+    const kioskAdmin = db.kioskAdmins.find((admin) => admin.adminId === kiosk.adminId) || null;
     const kioskJobs = db.jobs.filter((job) => job.kioskId === kiosk.kioskId);
     const jobIds = new Set(kioskJobs.map((job) => job.jobId));
     const serviceIds = new Set(kioskJobs.map((job) => job.service));
@@ -1226,6 +1447,7 @@ function buildSuperAdminHierarchy() {
 
     return {
       ...kiosk,
+      admin: kioskAdmin ? publicKioskAdmin(kioskAdmin) : null,
       services: kioskServices,
       jobs: kioskJobs,
       payments: db.payments.filter((payment) => jobIds.has(payment.jobId)),
@@ -1250,6 +1472,7 @@ function superAdminSnapshot() {
       services: db.services,
       pricing: db.pricing,
       kiosks: db.kiosks,
+      kioskAdmins: db.kioskAdmins.map(publicKioskAdmin),
       refunds: db.refunds,
       config: db.config
     },
@@ -1363,6 +1586,14 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
     if (collection === "services" && items.length <= 1) {
       return json(res, 409, { error: "At least one service must remain." });
     }
+    if (collection === "kioskAdmins") {
+      if (items.length <= 1) {
+        return json(res, 409, { error: "At least one kiosk admin must remain." });
+      }
+      if (db.kiosks.some((kiosk) => normalizeAdminId(kiosk.adminId) === normalizeAdminId(itemId))) {
+        return json(res, 409, { error: "Move this admin's kiosks to another admin before deleting." });
+      }
+    }
     const [deleted] = items.splice(index, 1);
     config.set(items);
     if (collection === "services") {
@@ -1427,11 +1658,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
-    if (!credentialsMatch(body, ADMIN_CREDENTIALS)) {
+    const kioskAdmin = findKioskAdminByCredentials(body);
+    if (!kioskAdmin) {
       return json(res, 401, { error: "Invalid kiosk admin credentials." });
     }
 
-    return json(res, 200, { ok: true, role: "kiosk-admin", token: createAdminSession("kiosk-admin") });
+    kioskAdmin.lastLoginAt = isoNow();
+    saveData();
+    return json(res, 200, { ok: true, role: "kiosk-admin", admin: publicKioskAdmin(kioskAdmin), token: createAdminSession("kiosk-admin", kioskAdmin) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/super-admin/login") {
@@ -1814,43 +2048,51 @@ const server = http.createServer(async (req, res) => {
     return handleSuperAdminCollection(req, res, resource, decodeSegment(pathParts[3] || ""), body);
   }
 
+  const adminSession = url.pathname.startsWith("/api/admin/") ? readAdminSession(req) : null;
+
   if (req.method === "GET" && url.pathname === "/api/admin/dashboard") {
+    const adminJobs = jobsForAdmin(adminSession);
+    const adminKiosks = kiosksForAdmin(adminSession);
     return json(res, 200, {
-      revenueToday: db.jobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? job.amount : 0), 0),
-      jobsToday: db.jobs.length,
-      failedJobs: db.jobs.filter((job) => String(job.printStatus || "").includes("Failed")).length,
-      activeKiosks: db.kiosks.filter((kiosk) => kiosk.status === "online").length
+      revenueToday: adminJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? job.amount : 0), 0),
+      jobsToday: adminJobs.length,
+      failedJobs: adminJobs.filter((job) => String(job.printStatus || "").includes("Failed")).length,
+      activeKiosks: adminKiosks.filter((kiosk) => kiosk.status === "online").length
     });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/revenue") {
-    const gross = db.jobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
-    const refunds = db.refunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
-    return json(res, 200, { gross, refunds, net: gross - refunds, pricing: db.pricing, services: db.services, config: db.config });
+    const adminJobs = jobsForAdmin(adminSession);
+    const adminPayments = paymentsForJobs(adminJobs);
+    const adminRefunds = refundsForJobs(adminJobs, adminPayments);
+    const adminServices = servicesForAdmin(adminSession);
+    const gross = adminJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
+    const refunds = adminRefunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
+    return json(res, 200, { gross, refunds, net: gross - refunds, pricing: pricingForServices(adminServices), services: adminServices, config: db.config });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/pricing") {
-    return json(res, 200, { pricing: db.pricing, services: db.services, config: db.config });
+    const adminServices = servicesForAdmin(adminSession);
+    return json(res, 200, { pricing: pricingForServices(adminServices), services: adminServices, config: db.config });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/services") {
     const kioskId = url.searchParams.get("kioskId");
-    const services = kioskId
-      ? db.services.filter((service) => !service.kioskIds.length || service.kioskIds.includes(kioskId))
-      : db.services;
-    return json(res, 200, { services, pricing: db.pricing, config: db.config });
+    const services = servicesForAdmin(adminSession, kioskId);
+    return json(res, 200, { services, pricing: pricingForServices(services), config: db.config });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/transactions") {
-    return json(res, 200, { payments: db.payments });
+    return json(res, 200, { payments: paymentsForJobs(jobsForAdmin(adminSession)) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/refunds") {
-    return json(res, 200, { refunds: db.refunds });
+    const adminJobs = jobsForAdmin(adminSession);
+    return json(res, 200, { refunds: refundsForJobs(adminJobs, paymentsForJobs(adminJobs)) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/print-history") {
-    return json(res, 200, { jobs: db.jobs });
+    return json(res, 200, { jobs: jobsForAdmin(adminSession) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/reports") {
@@ -1860,11 +2102,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/kiosks") {
-    return json(res, 200, { kiosks: db.kiosks });
+    return json(res, 200, { kiosks: kiosksForAdmin(adminSession) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/kiosks") {
-    const kiosk = normalizeSuperAdminKiosk(body.kiosk || body);
+    const kiosk = normalizeSuperAdminKiosk({
+      ...(body.kiosk || body),
+      adminId: adminSession.adminId
+    });
 
     if (db.kiosks.some((item) => String(item.kioskId).toUpperCase() === kiosk.kioskId)) {
       return json(res, 409, { error: "Kiosk ID already exists." });
@@ -1872,19 +2117,32 @@ const server = http.createServer(async (req, res) => {
 
     db.kiosks.push(kiosk);
     saveData();
-    return json(res, 201, { kiosk, kiosks: db.kiosks });
+    return json(res, 201, { kiosk, kiosks: kiosksForAdmin(adminSession) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/system-status") {
     return json(res, 200, {
-      kiosks: db.kiosks,
+      kiosks: kiosksForAdmin(adminSession),
       backend: "online",
       localAgentExpectedPort: 5077
     });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/pricing") {
-    db.pricing = normalizePricing(body.pricing || body, db.services);
+    const adminServices = servicesForAdmin(adminSession);
+    const allowedServiceIds = new Set(adminServices.map((service) => service.id));
+    const requestedPricing = body.pricing || body;
+    const scopedPricing = {};
+
+    if (requestedPricing && typeof requestedPricing === "object") {
+      Object.entries(requestedPricing).forEach(([serviceId, rates]) => {
+        if (allowedServiceIds.has(serviceId)) {
+          scopedPricing[serviceId] = rates;
+        }
+      });
+    }
+
+    db.pricing = normalizePricing({ ...db.pricing, ...scopedPricing }, db.services);
     db.services = db.services.map((service) => ({
       ...service,
       pricing: db.pricing[service.id] || service.pricing
@@ -1892,19 +2150,31 @@ const server = http.createServer(async (req, res) => {
     touchConfig("pricing-updated");
     saveSettings();
     saveData();
-    return json(res, 200, { pricing: db.pricing, config: db.config });
+    const scopedServices = servicesForAdmin(adminSession);
+    return json(res, 200, { pricing: pricingForServices(scopedServices), services: scopedServices, config: db.config });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/services") {
-    db.services = normalizeServices(body.services || body);
-    syncServiceSavePricing(body.pricing);
+    const savedServices = mergeAdminServices(adminSession, body.services || body, body.pricing);
+    if (!savedServices) {
+      return json(res, 403, { error: "This admin has no assigned kiosks." });
+    }
     touchConfig("services-updated");
     saveSettings();
     saveData();
-    return json(res, 200, { services: db.services, pricing: db.pricing, config: db.config });
+    const scopedServices = servicesForAdmin(adminSession);
+    return json(res, 200, { services: scopedServices, pricing: pricingForServices(scopedServices), config: db.config });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/refund") {
+    const adminJobs = jobsForAdmin(adminSession);
+    const adminPayments = paymentsForJobs(adminJobs);
+    const canRefundJob = adminJobs.some((job) => String(job.jobId || "") === String(body.jobId || ""));
+    const canRefundPayment = adminPayments.some((payment) => String(payment.paymentId || "") === String(body.paymentId || ""));
+    if (!canRefundJob && !canRefundPayment) {
+      return json(res, 403, { error: "This refund is outside your assigned kiosks." });
+    }
+
     const refund = {
       refundId: `REF-${Date.now()}`,
       jobId: body.jobId,
@@ -1922,6 +2192,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname.startsWith("/api/admin/reprint/")) {
     const job = findJob(url.pathname.split("/").pop());
     if (!job) return json(res, 404, { error: "Job not found" });
+    if (!adminCanAccessKiosk(adminSession, job.kioskId)) {
+      return json(res, 403, { error: "This job is outside your assigned kiosks." });
+    }
     return json(res, 200, { job: setJobPrintStatus(job, "Manual Reprint Done") });
   }
 

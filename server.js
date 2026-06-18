@@ -666,6 +666,59 @@ function findKioskAdminById(adminId = "") {
   return db.kioskAdmins.find((admin) => admin.adminId === id) || null;
 }
 
+function authenticatedAdminResponse(body = {}) {
+  const kioskAdmin = findKioskAdminByCredentials(body);
+  const superAdminMatches = credentialsMatch(body, SUPER_ADMIN_CREDENTIALS);
+
+  if (kioskAdmin && superAdminMatches) {
+    return {
+      status: 409,
+      body: {
+        error: "These credentials match both admin roles. Use different super admin and kiosk admin credentials."
+      }
+    };
+  }
+
+  if (superAdminMatches) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        role: "super-admin",
+        admin: {
+          name: "Super Admin",
+          email: String(body.email || "").trim().toLowerCase()
+        },
+        token: createAdminSession("super-admin", {
+          name: "Super Admin",
+          email: String(body.email || "").trim().toLowerCase()
+        })
+      }
+    };
+  }
+
+  if (kioskAdmin) {
+    kioskAdmin.lastLoginAt = isoNow();
+    saveData();
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        role: "kiosk-admin",
+        admin: publicKioskAdmin(kioskAdmin),
+        token: createAdminSession("kiosk-admin", kioskAdmin)
+      }
+    };
+  }
+
+  return {
+    status: 401,
+    body: {
+      error: "Invalid admin credentials."
+    }
+  };
+}
+
 function createAdminSession(role, account = {}) {
   const token = crypto.randomBytes(32).toString("hex");
   adminSessions.set(token, {
@@ -1703,23 +1756,25 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/auth/login") {
+    const result = authenticatedAdminResponse(body);
+    return json(res, result.status, result.body);
+  }
+
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
-    const kioskAdmin = findKioskAdminByCredentials(body);
-    if (!kioskAdmin) {
+    const result = authenticatedAdminResponse(body);
+    if (result.body.role !== "kiosk-admin") {
       return json(res, 401, { error: "Invalid kiosk admin credentials." });
     }
-
-    kioskAdmin.lastLoginAt = isoNow();
-    saveData();
-    return json(res, 200, { ok: true, role: "kiosk-admin", admin: publicKioskAdmin(kioskAdmin), token: createAdminSession("kiosk-admin", kioskAdmin) });
+    return json(res, result.status, result.body);
   }
 
   if (req.method === "POST" && url.pathname === "/api/super-admin/login") {
-    if (!credentialsMatch(body, SUPER_ADMIN_CREDENTIALS)) {
+    const result = authenticatedAdminResponse(body);
+    if (result.body.role !== "super-admin") {
       return json(res, 401, { error: "Invalid super admin credentials." });
     }
-
-    return json(res, 200, { ok: true, role: "super-admin", token: createAdminSession("super-admin") });
+    return json(res, result.status, result.body);
   }
 
   if (url.pathname.startsWith("/api/admin/") && url.pathname !== "/api/admin/login") {

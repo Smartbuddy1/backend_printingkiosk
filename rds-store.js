@@ -103,6 +103,7 @@ async function loadSnapshot() {
     kiosks: await loadCollection(client, "kiosks"),
     refunds: await loadCollection(client, "refunds"),
     kioskAdmins: await loadSetting(client, "kioskAdmins", []),
+    projects: await loadSetting(client, "projects", []),
     pricing: await loadSetting(client, "pricing", {}),
     config: await loadSetting(client, "config", {})
   };
@@ -147,6 +148,7 @@ async function saveSnapshot(snapshot) {
     await replaceCollection(client, "kiosks", snapshot.kiosks);
     await replaceCollection(client, "refunds", snapshot.refunds);
     await saveSetting(client, "kioskAdmins", snapshot.kioskAdmins || []);
+    await saveSetting(client, "projects", snapshot.projects || []);
     await saveSetting(client, "pricing", snapshot.pricing);
     await saveSetting(client, "config", snapshot.config);
     await client.query("COMMIT");

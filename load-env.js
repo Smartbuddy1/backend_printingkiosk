@@ -2,6 +2,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const defaultEnvPath = path.join(__dirname, ".env");
+const rootEnvPath = path.join(__dirname, "..", ".env");
+
+function uniquePaths(paths) {
+  return [...new Set(paths.filter(Boolean).map((item) => path.resolve(item)))];
+}
 
 function unquote(value) {
   const trimmed = value.trim();
@@ -15,11 +20,7 @@ function unquote(value) {
   return trimmed;
 }
 
-function loadEnv(envPath = defaultEnvPath) {
-  if (!fs.existsSync(envPath)) {
-    return {};
-  }
-
+function readEnvFile(envPath) {
   const loaded = {};
   const content = fs.readFileSync(envPath, "utf8");
 
@@ -37,9 +38,21 @@ function loadEnv(envPath = defaultEnvPath) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
 
     loaded[key] = value;
-    if (process.env[key] === undefined) {
+    if (process.env[key] === undefined || !String(process.env[key]).trim()) {
       process.env[key] = value;
     }
+  }
+
+  return loaded;
+}
+
+function loadEnv(envPath = [defaultEnvPath, rootEnvPath, path.join(process.cwd(), ".env")]) {
+  const envPaths = uniquePaths(Array.isArray(envPath) ? envPath : [envPath]);
+  const loaded = {};
+
+  for (const candidate of envPaths) {
+    if (!fs.existsSync(candidate)) continue;
+    Object.assign(loaded, readEnvFile(candidate));
   }
 
   return loaded;
@@ -49,5 +62,5 @@ module.exports = { loadEnv };
 
 if (require.main === module) {
   const loaded = loadEnv();
-  console.log(`Loaded ${Object.keys(loaded).length} variable(s) from ${defaultEnvPath}`);
+  console.log(`Loaded ${Object.keys(loaded).length} variable(s).`);
 }

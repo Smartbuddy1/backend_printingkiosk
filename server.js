@@ -15,13 +15,18 @@ const PORT = Number(process.env.PORT || 5080);
 const HOST = process.env.HOST || "";
 const DISABLE_ADMIN_ACCESS = process.env.DISABLE_ADMIN_ACCESS === "true";
 const RAZORPAY_API_BASE = "api.razorpay.com";
-const SETTINGS_PATH = path.join(__dirname, "settings.json");
-const DATA_PATH = path.join(__dirname, "data.json");
+const SETTINGS_PATH = process.env.SETTINGS_PATH ? path.resolve(process.env.SETTINGS_PATH) : path.join(__dirname, "settings.json");
+const DATA_PATH = process.env.DATA_PATH ? path.resolve(process.env.DATA_PATH) : path.join(__dirname, "data.json");
 const FRONTEND_DIR = path.join(__dirname, "../frontend");
+const FRONTEND_ASSET_DIR = path.join(FRONTEND_DIR, "assets");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 const SERVICE_IMAGE_DIR = path.join(UPLOADS_DIR, "service-images");
+const MAX_FILES_PER_JOB = 10;
+const CUSTOMER_UPLOAD_EXTENSIONS = new Set(["PDF", "JPG", "JPEG", "PNG"]);
+const KIOSK_PRINTER_STALE_MS = 10 * 60 * 1000;
 const mobileUploadSessions = new Map();
 const adminSessions = new Map();
+const processedRazorpayWebhookEvents = new Set();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const LOCAL_ONLY_ADMIN_EMAIL = "admin@printingkiosk.local";
 const LOCAL_ONLY_SUPER_ADMIN_EMAIL = "superadmin@printingkiosk.local";
@@ -94,9 +99,11 @@ const FRONTEND_FILES = new Set([
   "admin.html",
   "super-admin.html",
   "styles.css",
+  "ui-icons.js",
   "app.js",
   "super-admin.js"
 ]);
+const FRONTEND_ASSETS = new Set(["printhub-logo.png", "printhub-mark.png"]);
 const ADMIN_FRONTEND_FILES = new Set(["admin.html", "super-admin.html", "super-admin.js"]);
 
 const DEFAULT_SERVICES = [
@@ -351,6 +358,7 @@ function defaultKioskAdmin() {
     email: ADMIN_CREDENTIALS.email,
     password: ADMIN_CREDENTIALS.password,
     status: "active",
+    projectIds: ["default-project"],
     kioskIds: []
   };
 }
@@ -369,9 +377,27 @@ function normalizeKioskAdmin(record = {}, existing = {}) {
     email: String(next.email || "").trim().toLowerCase(),
     password: String(password || "").trim(),
     status: String(next.status || "active").trim().toLowerCase() === "disabled" ? "disabled" : "active",
+    projectIds: Array.isArray(next.projectIds)
+      ? next.projectIds.map((item) => slug(item, "")).filter(Boolean)
+      : String(next.projectIds || "").split(",").map((item) => slug(item, "")).filter(Boolean),
     kioskIds: Array.isArray(next.kioskIds)
       ? next.kioskIds.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean)
       : []
+  };
+}
+
+function normalizeSuperAdminProject(record = {}, existing = {}) {
+  const next = { ...existing, ...record };
+  const name = String(next.name || "New Project").trim();
+
+  return {
+    ...next,
+    projectId: slug(existing.projectId || next.projectId || name, `project-${Date.now()}`),
+    name,
+    description: String(next.description || "").trim(),
+    adminId: next.adminId ? normalizeAdminId(next.adminId, "") : "",
+    status: String(next.status || "active").toLowerCase() === "inactive" ? "inactive" : "active",
+    createdAt: existing.createdAt || next.createdAt || isoNow()
   };
 }
 
@@ -424,6 +450,14 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
   const persistedKiosks = Array.isArray(persistedData.kiosks) && persistedData.kiosks.length
     ? persistedData.kiosks
     : [defaultKiosk()];
+  const inferredProjectIds = [...new Set(persistedKiosks.map((kiosk) => slug(kiosk.projectId || "default-project", "default-project")))];
+  const projects = Array.isArray(persistedData.projects) && persistedData.projects.length
+    ? persistedData.projects.map((project) => normalizeSuperAdminProject(project))
+    : inferredProjectIds.map((projectId, index) => normalizeSuperAdminProject({
+        projectId,
+        name: projectId === "default-project" ? "Default Project" : projectId,
+        adminId: index === 0 ? fallbackAdminId : ""
+      }));
 
   return {
     jobs: Array.isArray(persistedData.jobs) ? persistedData.jobs : [],
@@ -431,9 +465,10 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
     services: persistedServices,
     pricing: normalizePricing(persistedData.pricing || persistedSettings.pricing, persistedServices),
     kiosks: persistedKiosks.map((kiosk) => normalizeSuperAdminKiosk({
-      adminId: kiosk.adminId || fallbackAdminId,
+      projectId: kiosk.projectId || projects[0]?.projectId || "default-project",
       ...kiosk
     })),
+    projects,
     kioskAdmins,
     refunds: Array.isArray(persistedData.refunds) ? persistedData.refunds : [],
     config: normalizeConfigMeta(persistedData.config || persistedSettings.config, persistedData.updatedAt)
@@ -445,7 +480,8 @@ function defaultKiosk() {
     kioskId: defaultKioskId(),
     name: process.env.KIOSK_NAME || os.hostname(),
     branch: process.env.KIOSK_BRANCH || "Local Branch",
-    adminId: process.env.KIOSK_ADMIN_ID || DEFAULT_KIOSK_ADMIN_ID,
+    projectId: process.env.KIOSK_PROJECT_ID || "default-project",
+    adminId: process.env.KIOSK_ADMIN_ID || "",
     status: "online",
     printer: "unknown",
     scanner: "unknown",
@@ -489,6 +525,7 @@ function dataSnapshot() {
     services: db.services,
     pricing: db.pricing,
     kiosks: db.kiosks,
+    projects: db.projects,
     kioskAdmins: db.kioskAdmins,
     refunds: db.refunds,
     config: db.config,
@@ -609,7 +646,7 @@ function json(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Razorpay-Signature, X-Razorpay-Event-Id",
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
   });
   res.end(JSON.stringify(body, null, 2));
@@ -653,6 +690,17 @@ function serveFrontendFile(res, filename) {
   }
 
   return binary(res, 200, fs.readFileSync(filePath), frontendContentType(safeName));
+}
+
+function serveFrontendAsset(res, filename) {
+  const safeName = path.basename(filename);
+  const filePath = path.join(FRONTEND_ASSET_DIR, safeName);
+
+  if (!FRONTEND_ASSETS.has(safeName) || !filePath.startsWith(FRONTEND_ASSET_DIR) || !fs.existsSync(filePath)) {
+    return json(res, 404, { error: "Frontend asset not found." });
+  }
+
+  return binary(res, 200, fs.readFileSync(filePath), imageContentType(safeName));
 }
 
 function ensureUploadDirs() {
@@ -708,6 +756,7 @@ function publicKioskAdmin(admin = {}) {
     name: admin.name,
     email: admin.email,
     status: admin.status,
+    projectIds: Array.isArray(admin.projectIds) ? admin.projectIds : [],
     kioskIds: Array.isArray(admin.kioskIds) ? admin.kioskIds : []
   };
 }
@@ -904,6 +953,16 @@ function requireAdminSession(req, res, role) {
   return true;
 }
 
+function projectIdsForAdmin(session = {}) {
+  if (session.role === "super-admin") return new Set(db.projects.map((project) => project.projectId));
+  const account = findKioskAdminById(session.adminId);
+  if (!account || account.status === "disabled") return new Set();
+  return new Set([
+    ...(account.projectIds || []).map((id) => slug(id, "")),
+    ...db.projects.filter((project) => project.adminId === account.adminId).map((project) => project.projectId)
+  ].filter(Boolean));
+}
+
 function kioskIdsForAdmin(session = {}) {
   if (session.role === "super-admin") {
     return new Set(db.kiosks.map((kiosk) => String(kiosk.kioskId || "").toUpperCase()));
@@ -912,12 +971,17 @@ function kioskIdsForAdmin(session = {}) {
   const account = findKioskAdminById(session.adminId);
   if (!account || account.status === "disabled") return new Set();
 
-  const explicit = new Set((account.kioskIds || []).map((id) => String(id || "").toUpperCase()).filter(Boolean));
-  const owned = db.kiosks
-    .filter((kiosk) => normalizeAdminId(kiosk.adminId) === account.adminId)
+  const assignedProjectIds = projectIdsForAdmin(session);
+  const projectKiosks = db.kiosks
+    .filter((kiosk) => assignedProjectIds.has(slug(kiosk.projectId, "")))
     .map((kiosk) => String(kiosk.kioskId || "").toUpperCase());
 
-  return new Set([...explicit, ...owned]);
+  return new Set(projectKiosks);
+}
+
+function projectsForAdmin(session = {}) {
+  const allowed = projectIdsForAdmin(session);
+  return db.projects.filter((project) => allowed.has(project.projectId));
 }
 
 function kiosksForAdmin(session = {}) {
@@ -1044,6 +1108,18 @@ function readBody(req) {
   });
 }
 
+function parseJsonBuffer(buffer) {
+  const raw = Buffer.isBuffer(buffer) ? buffer.toString("utf8") : String(buffer || "");
+
+  if (!raw) return {};
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { raw };
+  }
+}
+
 function readRawBody(req) {
   return new Promise((resolve) => {
     const chunks = [];
@@ -1056,17 +1132,39 @@ function readRawBody(req) {
   });
 }
 
+function normalizedEnv(names) {
+  return firstEnvValue(names);
+}
+
+function razorpayModeFromKeyId(keyId = "") {
+  const match = String(keyId || "").trim().match(/^rzp_(test|live)_/i);
+  return match ? match[1].toLowerCase() : "unknown";
+}
+
 function razorpayConfig() {
+  const keyId = normalizedEnv(["RAZORPAY_KEY_ID", "RAZORPAY_KEY"]);
+
   return {
-    keyId: process.env.RAZORPAY_KEY_ID || "",
-    keySecret: process.env.RAZORPAY_KEY_SECRET || "",
-    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || ""
+    keyId,
+    keySecret: normalizedEnv(["RAZORPAY_KEY_SECRET", "RAZORPAY_SECRET"]),
+    webhookSecret: normalizedEnv(["RAZORPAY_WEBHOOK_SECRET"]),
+    mode: keyId ? razorpayModeFromKeyId(keyId) : "not-configured"
   };
 }
 
 function razorpayIsConfigured() {
   const config = razorpayConfig();
   return Boolean(config.keyId && config.keySecret);
+}
+
+function razorpayStatus() {
+  const config = razorpayConfig();
+  return {
+    gateway: "razorpay",
+    razorpayConfigured: Boolean(config.keyId && config.keySecret),
+    razorpayMode: config.mode,
+    webhookConfigured: Boolean(config.webhookSecret)
+  };
 }
 
 function amountToPaise(amount) {
@@ -1140,6 +1238,225 @@ function razorpayRequest(method, apiPath, body) {
   });
 }
 
+function rememberRazorpayWebhookEvent(eventId) {
+  if (!eventId) return false;
+
+  if (processedRazorpayWebhookEvents.has(eventId)) {
+    return true;
+  }
+
+  processedRazorpayWebhookEvents.add(eventId);
+
+  if (processedRazorpayWebhookEvents.size > 1000) {
+    const [oldest] = processedRazorpayWebhookEvents;
+    processedRazorpayWebhookEvents.delete(oldest);
+  }
+
+  return false;
+}
+
+function titleStatus(value, fallback = "Webhook Received") {
+  const normalized = String(value || "").trim().replace(/[_-]+/g, " ");
+  if (!normalized) return fallback;
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function isRazorpayWebhookBody(body = {}) {
+  return Boolean(body && typeof body === "object" && (
+    body.event ||
+    body.payload ||
+    body.razorpay_order_id ||
+    body.razorpay_payment_id
+  ));
+}
+
+function razorpayWebhookStatus(event, paymentEntity = {}, orderEntity = {}) {
+  const eventName = String(event || "").toLowerCase();
+  const paymentStatus = String(paymentEntity.status || "").toLowerCase();
+  const orderStatus = String(orderEntity.status || "").toLowerCase();
+
+  if (eventName === "payment.failed" || paymentStatus === "failed") return "Failed";
+  if (
+    eventName === "payment.captured" ||
+    eventName === "order.paid" ||
+    paymentStatus === "captured" ||
+    orderStatus === "paid"
+  ) {
+    return "Success";
+  }
+  if (eventName === "payment.authorized" || paymentStatus === "authorized") return "Authorized";
+  if (eventName === "order.created" || paymentStatus === "created" || orderStatus === "created") return "Pending";
+
+  return titleStatus(paymentStatus || orderStatus || eventName);
+}
+
+function razorpayWebhookDetails(body = {}, req = { headers: {} }) {
+  const payload = body.payload || {};
+  const paymentEntity = payload.payment?.entity || body.payment?.entity || body.payment || {};
+  const orderEntity = payload.order?.entity || body.order?.entity || body.order || {};
+  const event = String(body.event || "").trim();
+  const status = razorpayWebhookStatus(event, paymentEntity, orderEntity);
+  const amountInPaise = Number(paymentEntity.amount || paymentEntity.base_amount || orderEntity.amount_paid || orderEntity.amount || 0);
+  const acquirerData = paymentEntity.acquirer_data || {};
+
+  return {
+    event,
+    eventId: String(req.headers["x-razorpay-event-id"] || body.id || "").trim(),
+    accountId: String(body.account_id || "").trim(),
+    status,
+    orderId: String(paymentEntity.order_id || orderEntity.id || body.razorpay_order_id || body.order_id || "").trim(),
+    razorpayPaymentId: String(paymentEntity.id || body.razorpay_payment_id || "").trim(),
+    kioskPaymentId: String(body.paymentId || body.payment_id || "").trim(),
+    amountInPaise: Number.isFinite(amountInPaise) && amountInPaise > 0 ? amountInPaise : 0,
+    currency: String(paymentEntity.currency || orderEntity.currency || body.currency || "INR").trim().toUpperCase(),
+    method: String(paymentEntity.method || "").trim(),
+    upiReferenceId: String(acquirerData.upi_transaction_id || acquirerData.rrn || body.upiReferenceId || "").trim(),
+    failureReason: String(paymentEntity.error_description || paymentEntity.error_reason || paymentEntity.error_code || "").trim()
+  };
+}
+
+function findRazorpayPaymentRecord(details = {}) {
+  return db.payments.find((payment) => (
+    (details.kioskPaymentId && String(payment.paymentId || "") === details.kioskPaymentId) ||
+    (details.orderId && String(payment.razorpayOrderId || "") === details.orderId) ||
+    (details.razorpayPaymentId && String(payment.razorpayPaymentId || "") === details.razorpayPaymentId)
+  ));
+}
+
+function shouldQueueAfterPayment(job = {}) {
+  const printStatus = String(job.printStatus || "");
+  return !["Printing", "Completed"].includes(printStatus);
+}
+
+function applyRazorpayWebhookUpdate(payment, details = {}) {
+  const now = new Date().toISOString();
+
+  if (details.orderId) payment.razorpayOrderId = details.orderId;
+  if (details.razorpayPaymentId) {
+    payment.razorpayPaymentId = details.razorpayPaymentId;
+    payment.gatewayTransactionId = details.razorpayPaymentId;
+  }
+  if (details.amountInPaise) {
+    payment.amountInPaise = details.amountInPaise;
+    payment.amount = details.amountInPaise / 100;
+  }
+  if (details.currency) payment.currency = details.currency;
+  if (details.method) payment.razorpayMethod = details.method;
+  if (details.upiReferenceId) payment.upiReferenceId = details.upiReferenceId;
+
+  payment.status = details.status || payment.status || "Webhook Received";
+  payment.razorpayWebhookEvent = details.event || payment.razorpayWebhookEvent;
+  payment.razorpayWebhookEventId = details.eventId || payment.razorpayWebhookEventId;
+  payment.razorpayWebhookReceivedAt = now;
+
+  const job = findJob(payment.jobId);
+
+  if (payment.status === "Success") {
+    payment.paidAt = payment.paidAt || now;
+    if (job) {
+      job.paymentStatus = "Payment Success";
+      if (shouldQueueAfterPayment(job)) {
+        job.printStatus = "In Queue";
+      }
+    }
+  } else if (payment.status === "Failed") {
+    payment.failedAt = payment.failedAt || now;
+    payment.failureReason = details.failureReason || payment.failureReason || "Razorpay payment failed.";
+    if (job && job.paymentStatus !== "Payment Success") {
+      job.paymentStatus = "Payment Failed";
+    }
+  }
+
+  return job;
+}
+
+function verifyRazorpayWebhookBody(req, rawBody) {
+  const { webhookSecret } = razorpayConfig();
+  const provided = String(req.headers["x-razorpay-signature"] || "").trim();
+
+  if (!webhookSecret) {
+    return { ok: true, verified: false };
+  }
+
+  if (!provided) {
+    return { ok: false, status: 400, error: "Razorpay webhook signature is missing." };
+  }
+
+  const signature = provided.replace(/^sha256=/i, "");
+  const expected = crypto.createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
+
+  if (!secureCompare(expected, signature)) {
+    return { ok: false, status: 400, error: "Razorpay webhook signature verification failed." };
+  }
+
+  return { ok: true, verified: true };
+}
+
+function handleLegacyPaymentWebhook(res, body = {}) {
+  const payment = db.payments.find((item) => item.paymentId === body.paymentId);
+  if (!payment) return json(res, 404, { error: "Payment not found" });
+
+  payment.status = body.status || "Success";
+  payment.gatewayTransactionId = body.gatewayTransactionId || payment.gatewayTransactionId || `GATEWAY-${Date.now()}`;
+  payment.upiReferenceId = body.upiReferenceId || payment.upiReferenceId || `UPI-${Date.now()}`;
+  payment.paidAt = new Date().toISOString();
+
+  const job = findJob(payment.jobId);
+  if (job && payment.status === "Success") {
+    job.paymentStatus = "Payment Success";
+    if (shouldQueueAfterPayment(job)) {
+      job.printStatus = "In Queue";
+    }
+  }
+
+  saveData();
+  return json(res, 200, { payment, job });
+}
+
+function handlePaymentWebhook(req, res, rawBody, body = {}) {
+  if (!isRazorpayWebhookBody(body) && !req.headers["x-razorpay-signature"]) {
+    return handleLegacyPaymentWebhook(res, body);
+  }
+
+  if (body.raw !== undefined) {
+    return json(res, 400, { error: "Invalid Razorpay webhook JSON." });
+  }
+
+  const signature = verifyRazorpayWebhookBody(req, rawBody);
+  if (!signature.ok) {
+    return json(res, signature.status, { error: signature.error });
+  }
+
+  const details = razorpayWebhookDetails(body, req);
+  if (details.eventId && processedRazorpayWebhookEvents.has(details.eventId)) {
+    return json(res, 200, { ok: true, duplicate: true, event: details.event });
+  }
+
+  const payment = findRazorpayPaymentRecord(details);
+
+  if (!payment) {
+    return json(res, 202, {
+      ok: true,
+      matched: false,
+      event: details.event,
+      orderId: details.orderId || null,
+      razorpayPaymentId: details.razorpayPaymentId || null
+    });
+  }
+
+  rememberRazorpayWebhookEvent(details.eventId);
+  const job = applyRazorpayWebhookUpdate(payment, details);
+  saveData();
+
+  return json(res, 200, {
+    ok: true,
+    verified: signature.verified,
+    event: details.event,
+    payment,
+    job
+  });
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -1203,6 +1520,7 @@ async function createMobileUploadSession(req) {
     qrSvg,
     status: "waiting",
     file: null,
+    files: [],
     createdAt: new Date().toISOString()
   };
 
@@ -1213,21 +1531,25 @@ async function createMobileUploadSession(req) {
 function uploadSessionResponse(session, req = null) {
   if (!session) return null;
   const baseUrl = req ? uploadBaseUrl(req, session) : (session.publicBaseUrl || `http://${localUploadHost()}:${PORT}`).replace(/\/+$/, "");
+  const files = Array.isArray(session.files) && session.files.length
+    ? session.files
+    : session.file ? [session.file] : [];
+
+  const publicFiles = files.map((file, index) => ({
+    name: file.name,
+    size: file.size,
+    mimeType: file.mimeType,
+    pages: file.pages,
+    previewUrl: `${baseUrl}/mobile-upload/${session.token}/file/${index}`
+  }));
 
   return {
     token: session.token,
     uploadUrl: session.uploadUrl,
     qrSvg: session.qrSvg,
     status: session.status,
-    file: session.file
-      ? {
-          name: session.file.name,
-          size: session.file.size,
-          mimeType: session.file.mimeType,
-          pages: session.file.pages,
-          previewUrl: `${baseUrl}/mobile-upload/${session.token}/file`
-        }
-      : null
+    file: publicFiles[0] || null,
+    files: publicFiles
   };
 }
 
@@ -1297,43 +1619,237 @@ function parseMultipartFile(buffer, contentType, fieldName = "document") {
   };
 }
 
-function renderMobileUploadPage(session) {
-  if (!session) {
-    return `
-      <!doctype html>
-      <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Upload expired</title></head>
-      <body style="font-family:Cambria, Georgia, 'Times New Roman', serif;padding:24px;background:#f3f6f5;color:#172033;"><h1>Upload link expired</h1><p>Please generate a new QR on the kiosk.</p></body></html>
-    `;
-  }
+function parseMultipartFiles(buffer, contentType) {
+  return parseMultipartParts(buffer, contentType)
+    .filter((part) => part.filename && ["document", "documents"].includes(part.name))
+    .slice(0, MAX_FILES_PER_JOB + 1)
+    .map((part) => {
+      const extension = part.filename.includes(".") ? part.filename.split(".").pop().toUpperCase() : "";
+      return {
+        name: part.filename,
+        extension,
+        mimeType: part.mimeType,
+        size: part.content.length,
+        pages: part.mimeType.startsWith("image/") || ["PNG", "JPG", "JPEG"].includes(extension) ? 1 : 1,
+        content: part.content
+      };
+    });
+}
 
+function renderMobileUploadShell({ title, eyebrow, heading, description, content, script = "" }) {
   return `
     <!doctype html>
-    <html>
+    <html lang="en">
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Upload to Printing Kiosk</title>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <meta name="theme-color" content="#1769f5" />
+        <title>${escapeHtml(title)} | PrintHub</title>
+        <link rel="icon" type="image/png" href="/assets/printhub-mark.png" />
         <style>
-          body{font-family:Cambria, Georgia, 'Times New Roman', serif;margin:0;background:#f3f6f5;color:#172033;}
-          main{min-height:100vh;display:grid;align-content:center;padding:24px;}
-          form{background:white;border:1px solid #d8e0e7;border-radius:10px;padding:24px;display:grid;gap:16px;box-shadow:0 18px 40px rgba(23,32,51,.1);}
-          h1{margin:0;font-size:24px;}
-          p{color:#647184;line-height:1.5;margin:0;}
-          input{border:1px solid #d8e0e7;border-radius:8px;padding:14px;width:100%;font:inherit;}
-          button{background:#1f5fbf;color:white;border:0;border-radius:8px;font:inherit;font-weight:800;min-height:48px;}
+          :root{--blue:#1769f5;--blue-dark:#0d47ae;--ink:#14213d;--muted:#64748b;--line:#dbe4ef;--soft:#f3f7fd;--green:#15a669;--red:#c2413b;}
+          *{box-sizing:border-box;}
+          html{min-height:100%;background:#eef4ff;}
+          body{min-height:100vh;margin:0;background:radial-gradient(circle at 8% 4%,rgba(23,105,245,.17),transparent 30%),radial-gradient(circle at 95% 90%,rgba(21,166,105,.11),transparent 32%),linear-gradient(160deg,#f8fbff 0%,#eef4ff 100%);color:var(--ink);font-family:"Segoe UI",Inter,Arial,sans-serif;}
+          body:before{background:linear-gradient(90deg,var(--blue),#20a7f7,var(--green));content:"";height:5px;left:0;position:fixed;right:0;top:0;z-index:2;}
+          .page{align-items:center;display:flex;justify-content:center;min-height:100vh;padding:max(28px,env(safe-area-inset-top)) 18px max(28px,env(safe-area-inset-bottom));}
+          .shell{max-width:480px;width:100%;}
+          .brand{align-items:center;display:flex;justify-content:center;margin:0 auto 18px;}
+          .brand img{display:block;height:auto;width:142px;}
+          .card{background:rgba(255,255,255,.96);border:1px solid rgba(205,219,238,.92);border-radius:24px;box-shadow:0 26px 70px rgba(31,74,140,.16);overflow:hidden;}
+          .card-head{background:linear-gradient(145deg,#fafdff,#f1f6ff);border-bottom:1px solid var(--line);padding:28px 26px 24px;text-align:center;}
+          .eyebrow{align-items:center;background:#eaf2ff;border:1px solid #cfe0ff;border-radius:999px;color:var(--blue);display:inline-flex;font-size:12px;font-weight:800;letter-spacing:.08em;padding:7px 11px;text-transform:uppercase;}
+          h1{font-size:clamp(27px,7vw,34px);letter-spacing:-.035em;line-height:1.1;margin:14px 0 9px;}
+          .lead{color:var(--muted);font-size:15px;line-height:1.55;margin:0 auto;max-width:370px;}
+          .card-body{padding:24px 26px 28px;}
+          .steps{display:grid;gap:8px;grid-template-columns:repeat(3,1fr);margin-bottom:20px;}
+          .step{align-items:center;color:var(--muted);display:flex;font-size:11px;font-weight:700;gap:6px;justify-content:center;text-align:center;}
+          .step span{align-items:center;background:#edf3fb;border-radius:50%;color:var(--blue);display:inline-flex;flex:0 0 22px;height:22px;justify-content:center;}
+          form{display:grid;gap:16px;}
+          .upload-zone{align-items:center;background:var(--soft);border:2px dashed #afc8ec;border-radius:18px;cursor:pointer;display:flex;flex-direction:column;min-height:190px;padding:26px 18px;text-align:center;transition:border-color .18s,background .18s,transform .18s;}
+          .upload-zone:active,.upload-zone.selected{background:#edf5ff;border-color:var(--blue);transform:scale(.99);}
+          .upload-zone input{height:1px;opacity:0;overflow:hidden;position:absolute;width:1px;}
+          .upload-icon{align-items:center;background:linear-gradient(145deg,var(--blue),#34a8f4);border-radius:16px;box-shadow:0 10px 24px rgba(23,105,245,.24);color:white;display:flex;font-size:29px;font-weight:400;height:58px;justify-content:center;margin-bottom:15px;width:58px;}
+          .upload-zone strong{font-size:18px;margin-bottom:5px;}
+          .upload-zone small{color:var(--muted);font-size:13px;line-height:1.45;}
+          .selection{background:#f8fafc;border:1px solid var(--line);border-radius:14px;padding:14px;}
+          .selection[hidden],.message[hidden]{display:none;}
+          .selection-head{align-items:center;display:flex;gap:10px;justify-content:space-between;margin-bottom:9px;}
+          .selection-head strong{font-size:14px;}
+          .selection-head button{background:none;border:0;color:var(--blue);font:inherit;font-size:13px;font-weight:700;padding:3px;}
+          .file-list{display:grid;gap:7px;list-style:none;margin:0;padding:0;}
+          .file-list li{align-items:center;color:#40516d;display:flex;font-size:12px;gap:8px;min-width:0;}
+          .file-list li:before{background:var(--blue);border-radius:50%;content:"";flex:0 0 6px;height:6px;width:6px;}
+          .file-list span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+          .message{border-radius:12px;font-size:13px;font-weight:650;line-height:1.45;padding:11px 13px;}
+          .message.error{background:#fff0ef;border:1px solid #fac9c5;color:var(--red);}
+          .privacy{align-items:flex-start;color:var(--muted);display:flex;font-size:12px;gap:8px;line-height:1.45;margin:0;}
+          .privacy:before{color:var(--green);content:"\\2713";font-weight:900;}
+          .submit{background:linear-gradient(135deg,var(--blue),var(--blue-dark));border:0;border-radius:14px;box-shadow:0 13px 26px rgba(23,105,245,.22);color:#fff;font:inherit;font-size:16px;font-weight:800;min-height:54px;padding:0 20px;transition:opacity .18s,transform .18s;width:100%;}
+          .submit:not(:disabled):active{transform:translateY(1px);}
+          .submit:disabled{box-shadow:none;cursor:not-allowed;opacity:.45;}
+          .footer{color:#718096;font-size:11px;line-height:1.5;margin:15px auto 0;max-width:390px;text-align:center;}
+          .status{align-items:center;display:flex;flex-direction:column;padding:12px 0 4px;text-align:center;}
+          .status-icon{align-items:center;background:#e8f8f1;border:1px solid #b9ead3;border-radius:50%;color:var(--green);display:flex;font-size:34px;font-weight:800;height:76px;justify-content:center;margin-bottom:18px;width:76px;}
+          .status-icon.warn{background:#fff5e8;border-color:#f3d3a5;color:#a15c10;}
+          .status h2{font-size:24px;margin:0 0 9px;}
+          .status p{color:var(--muted);line-height:1.55;margin:0;max-width:340px;}
+          .status-note{background:var(--soft);border-radius:12px;color:#40516d;font-size:13px;font-weight:650;margin-top:20px;padding:13px 15px;width:100%;}
+          @media(max-width:380px){.page{padding-left:12px;padding-right:12px}.card-head{padding:24px 19px 20px}.card-body{padding:20px 19px 23px}.brand img{width:122px}.step{display:grid;justify-items:center}.upload-zone{min-height:175px}}
         </style>
       </head>
       <body>
-        <main>
-          <form method="POST" action="/mobile-upload/${escapeHtml(session.token)}/upload" enctype="multipart/form-data">
-            <h1>Send document to kiosk</h1>
-            <p>Choose PDF, DOCX, JPG, or PNG from your phone. After upload, the kiosk will show preview automatically.</p>
-            <input name="document" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" required />
-            <button type="submit">Send to Kiosk</button>
-          </form>
+        <main class="page">
+          <div class="shell">
+            <a class="brand" href="#" aria-label="PrintHub"><img src="/assets/printhub-logo.png" alt="PrintHub" /></a>
+            <section class="card">
+              <header class="card-head">
+                <span class="eyebrow">${escapeHtml(eyebrow)}</span>
+                <h1>${escapeHtml(heading)}</h1>
+                <p class="lead">${escapeHtml(description)}</p>
+              </header>
+              <div class="card-body">${content}</div>
+            </section>
+            <p class="footer">Your documents are used only for this print session. Complete payment and printing on the kiosk screen.</p>
+          </div>
         </main>
+        ${script ? `<script>${script}</script>` : ""}
       </body>
     </html>
   `;
+}
+
+function renderMobileStatusPage({ title, heading, description, note, warning = false }) {
+  return renderMobileUploadShell({
+    title,
+    eyebrow: warning ? "Session notice" : "Upload complete",
+    heading,
+    description,
+    content: `
+      <div class="status">
+        <div class="status-icon ${warning ? "warn" : ""}">${warning ? "!" : "&#10003;"}</div>
+        <h2>${warning ? "Scan again" : "You are all set"}</h2>
+        <p>${escapeHtml(note)}</p>
+        <div class="status-note">${warning ? "Return to the PrintHub kiosk and generate a new QR code." : "Return to the kiosk to preview your documents and continue to payment."}</div>
+      </div>
+    `
+  });
+}
+
+function renderMobileUploadPage(session) {
+  if (!session) {
+    return renderMobileStatusPage({
+      title: "Upload link expired",
+      heading: "This upload link has expired",
+      description: "For your privacy, each PrintHub QR code works for one short upload session.",
+      note: "No files were uploaded. Use the kiosk screen to create a fresh upload code.",
+      warning: true
+    });
+  }
+
+  const script = `
+    const form = document.getElementById("upload-form");
+    const input = document.getElementById("documents");
+    const zone = document.getElementById("upload-zone");
+    const selection = document.getElementById("selection");
+    const count = document.getElementById("selection-count");
+    const list = document.getElementById("file-list");
+    const message = document.getElementById("message");
+    const clearButton = document.getElementById("clear-files");
+    const submitButton = document.getElementById("submit-button");
+    const supported = /\\.(pdf|jpe?g|png)$/i;
+
+    function showError(text) {
+      message.textContent = text;
+      message.hidden = !text;
+    }
+
+    function resetFiles() {
+      input.value = "";
+      selection.hidden = true;
+      zone.classList.remove("selected");
+      submitButton.disabled = true;
+      list.replaceChildren();
+    }
+
+    input.addEventListener("change", () => {
+      const files = Array.from(input.files || []);
+      showError("");
+
+      if (files.length > ${MAX_FILES_PER_JOB}) {
+        resetFiles();
+        showError("Choose no more than ${MAX_FILES_PER_JOB} files.");
+        return;
+      }
+
+      if (files.some((file) => !supported.test(file.name))) {
+        resetFiles();
+        showError("Only PDF, JPG, JPEG, and PNG files are supported.");
+        return;
+      }
+
+      if (!files.length) {
+        resetFiles();
+        return;
+      }
+
+      count.textContent = files.length + (files.length === 1 ? " file selected" : " files selected");
+      list.replaceChildren();
+      files.slice(0, 4).forEach((file) => {
+        const item = document.createElement("li");
+        const name = document.createElement("span");
+        name.textContent = file.name;
+        item.appendChild(name);
+        list.appendChild(item);
+      });
+      if (files.length > 4) {
+        const item = document.createElement("li");
+        const name = document.createElement("span");
+        name.textContent = "+ " + (files.length - 4) + " more file(s)";
+        item.appendChild(name);
+        list.appendChild(item);
+      }
+      selection.hidden = false;
+      zone.classList.add("selected");
+      submitButton.disabled = false;
+    });
+
+    clearButton.addEventListener("click", resetFiles);
+    form.addEventListener("submit", () => {
+      submitButton.disabled = true;
+      submitButton.textContent = "Sending securely...";
+    });
+  `;
+
+  return renderMobileUploadShell({
+    title: "Upload documents",
+    eyebrow: "Secure kiosk upload",
+    heading: "Upload your documents",
+    description: `Send up to ${MAX_FILES_PER_JOB} files directly to the PrintHub kiosk you just scanned.`,
+    content: `
+      <div class="steps" aria-label="Upload steps">
+        <div class="step"><span>1</span>Choose</div>
+        <div class="step"><span>2</span>Send</div>
+        <div class="step"><span>3</span>Preview</div>
+      </div>
+      <form id="upload-form" method="POST" action="/mobile-upload/${escapeHtml(session.token)}/upload" enctype="multipart/form-data">
+        <label class="upload-zone" id="upload-zone" for="documents">
+          <input id="documents" name="documents" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" multiple required />
+          <span class="upload-icon" aria-hidden="true">&#8593;</span>
+          <strong>Choose documents</strong>
+          <small>Tap to browse PDF, JPG, or PNG files<br />Maximum ${MAX_FILES_PER_JOB} files</small>
+        </label>
+        <div class="message error" id="message" role="alert" hidden></div>
+        <div class="selection" id="selection" hidden>
+          <div class="selection-head"><strong id="selection-count"></strong><button id="clear-files" type="button">Clear</button></div>
+          <ul class="file-list" id="file-list"></ul>
+        </div>
+        <p class="privacy">Files are securely linked to this kiosk session and are not shown to other users.</p>
+        <button class="submit" id="submit-button" type="submit" disabled>Send to PrintHub Kiosk</button>
+      </form>
+    `,
+    script
+  });
 }
 
 function createJob(body) {
@@ -1522,7 +2038,8 @@ function normalizeSuperAdminKiosk(record = {}, existing = {}) {
     kioskId,
     name: String(next.name || "New Kiosk").trim(),
     branch: String(next.branch || "Unassigned Branch").trim(),
-    adminId: normalizeAdminId(next.adminId || DEFAULT_KIOSK_ADMIN_ID),
+    projectId: slug(next.projectId || existing.projectId || "default-project", "default-project"),
+    adminId: next.adminId ? normalizeAdminId(next.adminId, "") : "",
     status: ["online", "offline", "maintenance"].includes(String(next.status || "").toLowerCase())
       ? String(next.status).toLowerCase()
       : "offline",
@@ -1557,6 +2074,14 @@ function normalizeSuperAdminService(record = {}, existing = {}) {
 
 function superAdminCollectionConfig(collection) {
   return {
+    projects: {
+      key: "projectId",
+      get: () => db.projects,
+      set: (items) => {
+        db.projects = items.map((project) => normalizeSuperAdminProject(project));
+      },
+      normalize: normalizeSuperAdminProject
+    },
     jobs: {
       key: "jobId",
       get: () => db.jobs,
@@ -1659,6 +2184,7 @@ function superAdminSummary() {
 
   return {
     kioskAdmins: db.kioskAdmins.length,
+    projects: db.projects.length,
     kiosks: db.kiosks.length,
     services: db.services.length,
     templates,
@@ -1674,7 +2200,11 @@ function superAdminSummary() {
 
 function buildSuperAdminHierarchy() {
   return db.kiosks.map((kiosk) => {
-    const kioskAdmin = db.kioskAdmins.find((admin) => admin.adminId === kiosk.adminId) || null;
+    const project = db.projects.find((item) => item.projectId === kiosk.projectId) || null;
+    const kioskAdmin = db.kioskAdmins.find((admin) => (
+      admin.adminId === project?.adminId ||
+      (admin.projectIds || []).includes(kiosk.projectId)
+    )) || null;
     const kioskJobs = db.jobs.filter((job) => job.kioskId === kiosk.kioskId);
     const jobIds = new Set(kioskJobs.map((job) => job.jobId));
     const serviceIds = new Set(kioskJobs.map((job) => job.service));
@@ -1694,6 +2224,7 @@ function buildSuperAdminHierarchy() {
 
     return {
       ...kiosk,
+      project,
       admin: kioskAdmin ? publicKioskAdmin(kioskAdmin) : null,
       services: kioskServices,
       jobs: kioskJobs,
@@ -1719,6 +2250,7 @@ function superAdminSnapshot() {
       services: db.services,
       pricing: db.pricing,
       kiosks: db.kiosks,
+      projects: db.projects,
       kioskAdmins: db.kioskAdmins.map(publicKioskAdmin),
       refunds: db.refunds,
       config: db.config
@@ -1730,6 +2262,23 @@ function superAdminSnapshot() {
 
 function findCollectionItem(config, itemId) {
   return config.get().find((item) => String(item[config.key]) === itemId);
+}
+
+function validateSuperAdminRecord(collection, record) {
+  if (collection === "projects" && record.adminId && !db.kioskAdmins.some((admin) => admin.adminId === record.adminId)) {
+    return "Select an existing kiosk admin for this project.";
+  }
+
+  if (collection === "kiosks" && !db.projects.some((project) => project.projectId === record.projectId)) {
+    return "Select an existing project before creating the kiosk.";
+  }
+
+  if (collection === "kioskAdmins") {
+    const invalidProject = (record.projectIds || []).find((projectId) => !db.projects.some((project) => project.projectId === projectId));
+    if (invalidProject) return `Project ${invalidProject} does not exist.`;
+  }
+
+  return "";
 }
 
 function handleSuperAdminTemplate(req, res, parts, body) {
@@ -1806,6 +2355,8 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
 
   if (req.method === "POST" && !itemId) {
     const record = config.normalize(body[collection.slice(0, -1)] || body);
+    const validationError = validateSuperAdminRecord(collection, record);
+    if (validationError) return json(res, 400, { error: validationError });
     const id = String(record[config.key]);
     if (!id) return json(res, 400, { error: `${config.key} is required.` });
     if (items.some((item) => String(item[config.key]) === id)) {
@@ -1821,6 +2372,8 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
     const index = items.findIndex((item) => String(item[config.key]) === itemId);
     if (index === -1) return json(res, 404, { error: "Record not found" });
     const record = config.normalize({ ...items[index], ...(body[collection.slice(0, -1)] || body), [config.key]: items[index][config.key] }, items[index]);
+    const validationError = validateSuperAdminRecord(collection, record);
+    if (validationError) return json(res, 400, { error: validationError });
     items[index] = record;
     config.set(items);
     saveSuperAdminCollection(collection);
@@ -1833,12 +2386,18 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
     if (collection === "services" && items.length <= 1) {
       return json(res, 409, { error: "At least one service must remain." });
     }
+    if (collection === "projects" && db.kiosks.some((kiosk) => kiosk.projectId === itemId)) {
+      return json(res, 409, { error: "Move this project's kiosks before deleting it." });
+    }
+    if (collection === "projects" && db.kioskAdmins.some((admin) => (admin.projectIds || []).includes(itemId))) {
+      return json(res, 409, { error: "Remove this project from its kiosk admin allocation before deleting it." });
+    }
     if (collection === "kioskAdmins") {
       if (items.length <= 1) {
         return json(res, 409, { error: "At least one kiosk admin must remain." });
       }
-      if (db.kiosks.some((kiosk) => normalizeAdminId(kiosk.adminId) === normalizeAdminId(itemId))) {
-        return json(res, 409, { error: "Move this admin's kiosks to another admin before deleting." });
+      if (db.projects.some((project) => project.adminId === normalizeAdminId(itemId)) || db.kiosks.some((kiosk) => kiosk.adminId && normalizeAdminId(kiosk.adminId) === normalizeAdminId(itemId))) {
+        return json(res, 409, { error: "Move this admin's projects and kiosks to another admin before deleting." });
       }
     }
     const [deleted] = items.splice(index, 1);
@@ -1857,6 +2416,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 200, { ok: true });
 
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === "POST" && url.pathname === "/api/payment/webhook") {
+    const rawBody = await readRawBody(req);
+    return handlePaymentWebhook(req, res, rawBody, parseJsonBuffer(rawBody));
+  }
+
   const isMultipart = req.headers["content-type"]?.includes("multipart/form-data");
   const shouldReadJsonBody = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !isMultipart;
   const body = shouldReadJsonBody ? await readBody(req) : {};
@@ -1882,6 +2447,10 @@ const server = http.createServer(async (req, res) => {
     return redirect(res, "/super-admin.html");
   }
 
+  if (req.method === "GET" && url.pathname.startsWith("/assets/")) {
+    return serveFrontendAsset(res, path.basename(url.pathname));
+  }
+
   const frontendFilename = path.basename(url.pathname);
   if (req.method === "GET" && url.pathname === `/${frontendFilename}` && FRONTEND_FILES.has(frontendFilename)) {
     if (DISABLE_ADMIN_ACCESS && ADMIN_FRONTEND_FILES.has(frontendFilename)) {
@@ -1896,10 +2465,7 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       service: "printing-kiosk-backend",
       persistence: rdsStore.enabled() ? "postgresql" : "local-json",
-      payments: {
-        gateway: "razorpay",
-        razorpayConfigured: razorpayIsConfigured()
-      },
+      payments: razorpayStatus(),
       time: new Date().toISOString()
     });
   }
@@ -2043,15 +2609,19 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, uploadSessionResponse(session, req));
   }
 
-  if (req.method === "GET" && url.pathname.startsWith("/mobile-upload/") && url.pathname.endsWith("/file")) {
-    const token = url.pathname.split("/")[2];
+  if (req.method === "GET" && /^\/mobile-upload\/[^/]+\/file(?:\/\d+)?$/.test(url.pathname)) {
+    const pathParts = url.pathname.split("/");
+    const token = pathParts[2];
+    const fileIndex = Number(pathParts[4] || 0);
     const session = mobileUploadSessions.get(token);
+    const files = Array.isArray(session?.files) && session.files.length ? session.files : session?.file ? [session.file] : [];
+    const file = files[fileIndex];
 
-    if (!session?.file?.content) {
+    if (!file?.content) {
       return json(res, 404, { error: "Uploaded file not found" });
     }
 
-    return binary(res, 200, session.file.content, session.file.mimeType);
+    return binary(res, 200, file.content, file.mimeType);
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/mobile-upload/")) {
@@ -2067,32 +2637,40 @@ const server = http.createServer(async (req, res) => {
       return html(res, 404, renderMobileUploadPage(null));
     }
 
-    const file = parseMultipartFile(await readRawBody(req), req.headers["content-type"] || "");
+    const files = parseMultipartFiles(await readRawBody(req), req.headers["content-type"] || "");
 
-    if (!file) {
-      return html(res, 400, `
-        <!doctype html>
-        <html><head><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Upload failed</title></head>
-        <body style="font-family:Cambria, Georgia, 'Times New Roman', serif;padding:24px;background:#f3f6f5;color:#172033;"><h1>Upload failed</h1><p>Please go back and choose a valid document.</p></body></html>
-      `);
+    if (!files.length || files.length > MAX_FILES_PER_JOB) {
+      return html(res, 400, renderMobileStatusPage({
+        title: "Upload failed",
+        heading: "We could not send those files",
+        description: `Choose between 1 and ${MAX_FILES_PER_JOB} valid documents and try again from a fresh kiosk QR code.`,
+        note: "Nothing was added to the print session.",
+        warning: true
+      }));
+    }
+
+    const unsupportedFile = files.find((file) => !CUSTOMER_UPLOAD_EXTENSIONS.has(file.extension));
+    if (unsupportedFile) {
+      return html(res, 400, renderMobileStatusPage({
+        title: "Unsupported file",
+        heading: "That file type is not supported",
+        description: "PrintHub accepts PDF, JPG, JPEG, and PNG documents from this mobile upload page.",
+        note: "Nothing was added to the print session.",
+        warning: true
+      }));
     }
 
     session.status = "uploaded";
-    session.file = file;
+    session.files = files;
+    session.file = files[0];
     session.uploadedAt = new Date().toISOString();
 
-    return html(res, 200, `
-      <!doctype html>
-      <html>
-        <head><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Uploaded</title></head>
-        <body style="font-family:Cambria, Georgia, 'Times New Roman', serif;padding:24px;background:#f3f6f5;color:#172033;">
-          <main style="background:white;border:1px solid #d8e0e7;border-radius:10px;padding:22px;">
-            <h1>Document sent</h1>
-            <p>${escapeHtml(file.name)} has been sent to the kiosk. Please continue on the kiosk screen.</p>
-          </main>
-        </body>
-      </html>
-    `);
+    return html(res, 200, renderMobileStatusPage({
+      title: "Documents sent",
+      heading: `${files.length} file${files.length === 1 ? "" : "s"} sent successfully`,
+      description: "Your documents are now ready on the PrintHub kiosk screen.",
+      note: "You can close this page. Continue on the kiosk to review print options and pay."
+    }));
   }
 
   if (req.method === "POST" && url.pathname === "/api/jobs/create") {
@@ -2130,6 +2708,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/payment/create") {
+    const config = razorpayConfig();
+
     if (!razorpayIsConfigured()) {
       return json(res, 503, {
         error: "Razorpay keys are not configured.",
@@ -2140,6 +2720,10 @@ const server = http.createServer(async (req, res) => {
     const job = upsertPaymentJob(body);
     const amount = amountToPaise(job.amount);
     let razorpayOrder;
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return json(res, 400, { error: "Payment amount must be greater than zero." });
+    }
 
     try {
       razorpayOrder = await razorpayRequest("POST", "/v1/orders", {
@@ -2165,6 +2749,7 @@ const server = http.createServer(async (req, res) => {
       currency: "INR",
       paymentMethod: "Razorpay Checkout",
       razorpayOrderId: razorpayOrder.id,
+      razorpayMode: config.mode,
       status: "Pending",
       createdAt: new Date().toISOString()
     };
@@ -2175,7 +2760,7 @@ const server = http.createServer(async (req, res) => {
       job,
       payment,
       checkout: {
-        key: razorpayConfig().keyId,
+        key: config.keyId,
         orderId: razorpayOrder.id,
         amount,
         currency: "INR",
@@ -2191,6 +2776,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/payment/verify") {
+    const config = razorpayConfig();
+
     if (!razorpayIsConfigured()) {
       return json(res, 503, { error: "Razorpay keys are not configured." });
     }
@@ -2202,40 +2789,28 @@ const server = http.createServer(async (req, res) => {
     if (!job) return json(res, 404, { error: "Payment job was not found." });
 
     const expectedSignature = crypto
-      .createHmac("sha256", razorpayConfig().keySecret)
+      .createHmac("sha256", config.keySecret)
       .update(`${payment.razorpayOrderId}|${body.razorpay_payment_id}`)
       .digest("hex");
 
     if (!secureCompare(expectedSignature, body.razorpay_signature)) {
       payment.status = "Signature Failed";
       payment.failedAt = new Date().toISOString();
-      return json(res, 400, { error: "Razorpay payment signature verification failed." });
+      const modeHint = payment.razorpayMode && payment.razorpayMode !== config.mode
+        ? ` Order was created with ${payment.razorpayMode} keys, but the backend is currently using ${config.mode} keys.`
+        : "";
+      return json(res, 400, { error: `Razorpay payment signature verification failed.${modeHint}` });
     }
 
     payment.status = "Success";
     payment.razorpayPaymentId = body.razorpay_payment_id;
     payment.razorpaySignature = body.razorpay_signature;
+    payment.razorpayMode = payment.razorpayMode || config.mode;
     payment.paidAt = new Date().toISOString();
     job.paymentStatus = "Payment Success";
     job.printStatus = "In Queue";
     saveData();
 
-    return json(res, 200, { payment, job });
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/payment/webhook") {
-    const payment = db.payments.find((item) => item.paymentId === body.paymentId);
-    if (!payment) return json(res, 404, { error: "Payment not found" });
-    payment.status = body.status || "Success";
-    payment.gatewayTransactionId = body.gatewayTransactionId || `GATEWAY-${Date.now()}`;
-    payment.upiReferenceId = body.upiReferenceId || `UPI-${Date.now()}`;
-    payment.paidAt = new Date().toISOString();
-    const job = findJob(payment.jobId);
-    if (job && payment.status === "Success") {
-      job.paymentStatus = "Payment Success";
-      job.printStatus = "In Queue";
-    }
-    saveData();
     return json(res, 200, { payment, job });
   }
 
@@ -2320,6 +2895,10 @@ const server = http.createServer(async (req, res) => {
 
   const adminSession = url.pathname.startsWith("/api/admin/") ? readAdminSession(req) : null;
 
+  if (url.pathname.startsWith("/api/admin/") && req.method !== "GET") {
+    return json(res, 403, { error: "Kiosk admin access is read-only. Changes can only be made by the super admin." });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/admin/dashboard") {
     const adminJobs = jobsForAdmin(adminSession);
     const adminKiosks = kiosksForAdmin(adminSession);
@@ -2373,6 +2952,10 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/admin/kiosks") {
     return json(res, 200, { kiosks: kiosksForAdmin(adminSession) });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/projects") {
+    return json(res, 200, { projects: projectsForAdmin(adminSession) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/kiosks") {

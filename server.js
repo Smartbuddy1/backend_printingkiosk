@@ -22,13 +22,71 @@ const UPLOADS_DIR = path.join(__dirname, "uploads");
 const SERVICE_IMAGE_DIR = path.join(UPLOADS_DIR, "service-images");
 const mobileUploadSessions = new Map();
 const adminSessions = new Map();
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const LOCAL_ONLY_ADMIN_EMAIL = "admin@printingkiosk.local";
+const LOCAL_ONLY_SUPER_ADMIN_EMAIL = "superadmin@printingkiosk.local";
+const LOCAL_ONLY_ADMIN_PASSWORD = "local-admin-password";
+const LOCAL_ONLY_SUPER_ADMIN_PASSWORD = "local-super-admin-password";
+const UNSAFE_PRODUCTION_VALUES = new Set([
+  "",
+  "demo1234",
+  "superdemo1234",
+  "change-this-admin-password",
+  "change-this-super-admin-password",
+  "change-this-kiosk-admin-password",
+  "local-admin-password",
+  "local-super-admin-password",
+  "admin@printingkiosk.local",
+  "superadmin@printingkiosk.local"
+]);
+
+function firstEnvValue(names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value !== undefined && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+
+  return "";
+}
+
+function requiredProductionValue(label, value) {
+  if (!IS_PRODUCTION) return value;
+
+  const normalized = String(value || "").trim();
+  if (UNSAFE_PRODUCTION_VALUES.has(normalized.toLowerCase())) {
+    throw new Error(`${label} must be set to a real production value before starting the backend.`);
+  }
+
+  return normalized;
+}
+
+function configValue(names, developmentFallback, label) {
+  const value = firstEnvValue(names) || developmentFallback;
+  return requiredProductionValue(label, value);
+}
+
+function defaultKioskId() {
+  const configured = firstEnvValue(["KIOSK_ID"]);
+  if (configured) return configured.toUpperCase();
+
+  const hostId = os.hostname()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24);
+
+  return `KIOSK-${hostId || "UNASSIGNED"}`;
+}
+
 const ADMIN_CREDENTIALS = {
-  email: process.env.KIOSK_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "admin@printingkiosk.local",
-  password: process.env.KIOSK_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || "demo1234"
+  email: configValue(["KIOSK_ADMIN_EMAIL", "ADMIN_EMAIL"], LOCAL_ONLY_ADMIN_EMAIL, "KIOSK_ADMIN_EMAIL"),
+  password: configValue(["KIOSK_ADMIN_PASSWORD", "ADMIN_PASSWORD"], LOCAL_ONLY_ADMIN_PASSWORD, "KIOSK_ADMIN_PASSWORD")
 };
 const SUPER_ADMIN_CREDENTIALS = {
-  email: process.env.SUPER_ADMIN_EMAIL || process.env.SUPER_EMAIL || "superadmin@printingkiosk.local",
-  password: process.env.SUPER_ADMIN_PASSWORD || process.env.SUPER_PASSWORD || "superdemo1234"
+  email: configValue(["SUPER_ADMIN_EMAIL", "SUPER_EMAIL"], LOCAL_ONLY_SUPER_ADMIN_EMAIL, "SUPER_ADMIN_EMAIL"),
+  password: configValue(["SUPER_ADMIN_PASSWORD", "SUPER_PASSWORD"], LOCAL_ONLY_SUPER_ADMIN_PASSWORD, "SUPER_ADMIN_PASSWORD")
 };
 const DEFAULT_KIOSK_ADMIN_ID = process.env.KIOSK_ADMIN_ID || "default-admin";
 const FRONTEND_FILES = new Set([
@@ -93,7 +151,7 @@ const DEFAULT_SERVICES = [
     kioskIds: [],
     pricing: { bw: 3, color: 12 },
     templates: [
-      { id: "birth-certificate", title: "Birth Certificate Form", description: "Blank Form No. 5 birth certificate template.", pages: 1, fields: ["Name", "Sex", "Date of birth", "Place of birth", "Mother name", "Father name"], imageUrl: "https://www.pdffiller.com/preview/29/559/29559281/large.png" },
+      { id: "birth-certificate", title: "Birth Certificate Form", description: "Blank Form No. 5 birth certificate template.", pages: 1, fields: ["Name", "Sex", "Date of birth", "Place of birth", "Mother name", "Father name"], imageUrl: "" },
       { id: "voter-form-6", title: "Form 6", description: "Blank voter registration application template.", pages: 1, fields: ["Applicant", "Age / DOB", "Address", "Constituency", "Mobile"] },
       { id: "voter-form-8", title: "Form 8", description: "Blank voter correction or shifting application template.", pages: 1, fields: ["Applicant", "EPIC No.", "Correction type", "Correct details", "Mobile"] },
       { id: "domicile-certificate", title: "Domicile Certificate Form", description: "Blank domicile certificate application format.", pages: 1, fields: ["Applicant", "DOB", "Address", "Years of residence", "Mobile"] },
@@ -384,7 +442,7 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
 
 function defaultKiosk() {
   return {
-    kioskId: process.env.KIOSK_ID || "KIOSK-BANK-01",
+    kioskId: defaultKioskId(),
     name: process.env.KIOSK_NAME || os.hostname(),
     branch: process.env.KIOSK_BRANCH || "Local Branch",
     adminId: process.env.KIOSK_ADMIN_ID || DEFAULT_KIOSK_ADMIN_ID,
@@ -633,11 +691,15 @@ function safeUploadedImageName(filename) {
   return `${Date.now()}-${crypto.randomBytes(3).toString("hex")}-${base}${normalizedExtension}`;
 }
 
+function credentialIdentifier(body = {}) {
+  return String(body.identifier || body.email || body.username || body.adminId || body.ownerId || body.id || "").trim();
+}
+
 function credentialsMatch(body, expected) {
-  const email = String(body?.email || "").trim().toLowerCase();
+  const identifier = credentialIdentifier(body).toLowerCase();
   const password = String(body?.password || "");
 
-  return email === String(expected.email || "").trim().toLowerCase() && password === String(expected.password || "");
+  return identifier === String(expected.email || "").trim().toLowerCase() && password === String(expected.password || "");
 }
 
 function publicKioskAdmin(admin = {}) {
@@ -651,12 +713,14 @@ function publicKioskAdmin(admin = {}) {
 }
 
 function findKioskAdminByCredentials(body = {}) {
-  const email = String(body.email || "").trim().toLowerCase();
+  const identifier = credentialIdentifier(body);
+  const normalizedIdentifier = identifier.toLowerCase();
+  const adminId = normalizeAdminId(identifier, "");
   const password = String(body.password || "");
 
   return db.kioskAdmins.find((admin) => (
     admin.status !== "disabled" &&
-    admin.email === email &&
+    (admin.email === normalizedIdentifier || admin.adminId === adminId) &&
     admin.password === password
   )) || null;
 }
@@ -707,6 +771,90 @@ function authenticatedAdminResponse(body = {}) {
         role: "kiosk-admin",
         admin: publicKioskAdmin(kioskAdmin),
         token: createAdminSession("kiosk-admin", kioskAdmin)
+      }
+    };
+  }
+
+  return {
+    status: 401,
+    body: {
+      error: "Invalid admin credentials."
+    }
+  };
+}
+
+function kioskAdminUnlockResponse(body = {}) {
+  const kioskId = String(body.kioskId || "").trim().toUpperCase();
+  const kiosk = kioskId ? kioskForConfig(kioskId) : null;
+  const kioskAdmin = findKioskAdminByCredentials(body);
+  const superAdminMatches = credentialsMatch(body, SUPER_ADMIN_CREDENTIALS);
+
+  if (!kioskId) {
+    return {
+      status: 400,
+      body: {
+        error: "Kiosk ID is required."
+      }
+    };
+  }
+
+  if (!kiosk) {
+    return {
+      status: 404,
+      body: {
+        error: "Kiosk was not found."
+      }
+    };
+  }
+
+  if (kioskAdmin && superAdminMatches) {
+    return {
+      status: 409,
+      body: {
+        error: "These credentials match both admin roles. Use different super admin and kiosk admin credentials."
+      }
+    };
+  }
+
+  if (superAdminMatches) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        role: "super-admin",
+        kioskId,
+        admin: {
+          name: "Super Admin",
+          email: credentialIdentifier(body).toLowerCase()
+        }
+      }
+    };
+  }
+
+  if (kioskAdmin) {
+    const session = {
+      role: "kiosk-admin",
+      adminId: kioskAdmin.adminId
+    };
+
+    if (!adminCanAccessKiosk(session, kioskId)) {
+      return {
+        status: 403,
+        body: {
+          error: "This kiosk admin is not assigned to this kiosk."
+        }
+      };
+    }
+
+    kioskAdmin.lastLoginAt = isoNow();
+    saveData();
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        role: "kiosk-admin",
+        kioskId,
+        admin: publicKioskAdmin(kioskAdmin)
       }
     };
   }
@@ -1191,7 +1339,7 @@ function renderMobileUploadPage(session) {
 function createJob(body) {
   const job = {
     jobId: body.jobId || `JOB-${Date.now()}`,
-    kioskId: body.kioskId || "KIOSK-BANK-01",
+    kioskId: body.kioskId || defaultKioskId(),
     service: body.service || "print",
     fileName: body.fileName || "pending-upload.pdf",
     fileType: body.fileType || "PDF",
@@ -1330,7 +1478,7 @@ function normalizeSuperAdminJob(record = {}, existing = {}) {
   return {
     ...next,
     jobId: String(existing.jobId || next.jobId || `JOB-${Date.now()}`).trim(),
-    kioskId: String(next.kioskId || "KIOSK-BANK-01").trim(),
+    kioskId: String(next.kioskId || defaultKioskId()).trim(),
     service: String(next.service || "print").trim(),
     fileName: String(next.fileName || "admin-created-job.pdf").trim(),
     fileType: String(next.fileType || "PDF").trim().toUpperCase(),
@@ -1789,6 +1937,11 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, kioskConfigResponse(url.searchParams.get("kioskId") || ""));
   }
 
+  if (req.method === "POST" && url.pathname === "/api/kiosk/admin-unlock") {
+    const result = kioskAdminUnlockResponse(body);
+    return json(res, result.status, result.body);
+  }
+
   if (req.method === "POST" && url.pathname === "/api/kiosk/setup/check") {
     const validation = validateKioskActivationRequest(body);
     if (validation.error) {
@@ -1954,7 +2107,7 @@ const server = http.createServer(async (req, res) => {
     job.pageCount = Number(body.pageCount || job.pageCount);
     job.printStatus = "File Uploaded";
     saveData();
-    return json(res, 200, { job, note: "Connect multer or signed object storage for real uploads." });
+    return json(res, 200, { job });
   }
 
   if (req.method === "POST" && url.pathname === "/api/jobs/settings") {
@@ -1979,7 +2132,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/payment/create") {
     if (!razorpayIsConfigured()) {
       return json(res, 503, {
-        error: "Razorpay test keys are not configured.",
+        error: "Razorpay keys are not configured.",
         setup: "Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET before starting the kiosk."
       });
     }
@@ -2039,7 +2192,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/payment/verify") {
     if (!razorpayIsConfigured()) {
-      return json(res, 503, { error: "Razorpay test keys are not configured." });
+      return json(res, 503, { error: "Razorpay keys are not configured." });
     }
 
     const payment = db.payments.find((item) => item.razorpayOrderId === body.razorpay_order_id);

@@ -24,6 +24,16 @@ const SERVICE_IMAGE_DIR = path.join(UPLOADS_DIR, "service-images");
 const MAX_FILES_PER_JOB = 10;
 const CUSTOMER_UPLOAD_EXTENSIONS = new Set(["PDF", "JPG", "JPEG", "PNG"]);
 const KIOSK_PRINTER_STALE_MS = 10 * 60 * 1000;
+const KIOSK_UPDATE_STATUSES = new Set([
+  "current",
+  "available",
+  "downloading",
+  "deferred",
+  "installing",
+  "updated",
+  "failed",
+  "rollback"
+]);
 const mobileUploadSessions = new Map();
 const adminSessions = new Map();
 const processedRazorpayWebhookEvents = new Set();
@@ -259,11 +269,63 @@ function normalizeTemplates(templates) {
         title,
         description: String(template?.description || "Blank printable template.").trim(),
         pages: Math.max(1, Math.min(20, Number(template?.pages || 1))),
+        paperSize: ["Auto", "A4", "A3", "Letter", "Legal"].find((size) => size.toLowerCase() === String(template?.paperSize || "Auto").trim().toLowerCase()) || "Auto",
+        orientation: String(template?.orientation || "portrait").toLowerCase() === "landscape" ? "landscape" : "portrait",
         fields: normalizeFields(template?.fields).length ? normalizeFields(template?.fields) : ["Applicant", "Address", "Mobile", "Purpose", "Signature"],
         imageUrl: String(template?.imageUrl || "").trim()
       };
     })
     .filter((template) => template.title);
+}
+
+const DEFAULT_SERVICE_CUSTOMER_SETTINGS = Object.freeze({
+  bw: true,
+  color: true,
+  copies: true
+});
+
+const DEFAULT_SERVICE_PRINT_DEFAULTS = Object.freeze({
+  colorMode: "bw",
+  copies: 1,
+  paperSize: "A4",
+  sides: "single",
+  orientation: "portrait",
+  range: "all"
+});
+
+function normalizeServiceCustomerSettings(settings = {}, existing = {}) {
+  const source = {
+    ...DEFAULT_SERVICE_CUSTOMER_SETTINGS,
+    ...(existing && typeof existing === "object" ? existing : {}),
+    ...(settings && typeof settings === "object" ? settings : {})
+  };
+  const normalized = Object.fromEntries(
+    Object.keys(DEFAULT_SERVICE_CUSTOMER_SETTINGS).map((key) => [key, source[key] !== false])
+  );
+
+  if (!normalized.bw && !normalized.color) {
+    normalized.bw = true;
+  }
+
+  return normalized;
+}
+
+function normalizeServicePrintDefaults(defaults = {}, existing = {}) {
+  const source = {
+    ...DEFAULT_SERVICE_PRINT_DEFAULTS,
+    ...(existing && typeof existing === "object" ? existing : {}),
+    ...(defaults && typeof defaults === "object" ? defaults : {})
+  };
+  const paperSize = ["A4", "A3", "Letter", "Legal"].find((size) => size.toLowerCase() === String(source.paperSize || "").trim().toLowerCase()) || "A4";
+
+  return {
+    colorMode: String(source.colorMode || "").toLowerCase() === "color" ? "color" : "bw",
+    copies: Math.max(1, Math.min(99, Number(source.copies || 1))),
+    paperSize,
+    sides: String(source.sides || "").toLowerCase() === "duplex" ? "duplex" : "single",
+    orientation: String(source.orientation || "").toLowerCase() === "landscape" ? "landscape" : "portrait",
+    range: String(source.range || "all").trim() || "all"
+  };
 }
 
 function normalizeServices(services) {
@@ -293,7 +355,12 @@ function normalizeServices(services) {
         mode,
         imageUrl: String(service?.imageUrl || fallback.imageUrl || "").trim(),
         enabled: service?.enabled !== false,
+        projectIds: Array.isArray(service?.projectIds)
+          ? service.projectIds.map((item) => slug(item, "")).filter(Boolean)
+          : String(service?.projectIds || "").split(",").map((item) => slug(item, "")).filter(Boolean),
         kioskIds: Array.isArray(service?.kioskIds) ? service.kioskIds.map((item) => String(item).trim()).filter(Boolean) : [],
+        customerSettings: normalizeServiceCustomerSettings(service?.customerSettings, fallback.customerSettings),
+        printDefaults: normalizeServicePrintDefaults(service?.printDefaults, fallback.printDefaults),
         pricing: {
           bw: numericPrice(service?.pricing?.bw, fallback.pricing?.bw ?? DEFAULT_PRICING.print.bw),
           color: numericPrice(service?.pricing?.color, fallback.pricing?.color ?? DEFAULT_PRICING.print.color)
@@ -458,19 +525,36 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
         name: projectId === "default-project" ? "Default Project" : projectId,
         adminId: index === 0 ? fallbackAdminId : ""
       }));
+  const kiosks = persistedKiosks.map((kiosk) => normalizeSuperAdminKiosk({
+    projectId: kiosk.projectId || projects[0]?.projectId || "default-project",
+    ...kiosk
+  }));
+  const kioskProjects = [...new Set(kiosks.map((kiosk) => slug(kiosk.projectId, "")).filter(Boolean))];
+  const services = persistedServices.map((service) => {
+    if (service.projectIds.length) return { ...service, kioskIds: [] };
+
+    const legacyKioskIds = new Set(service.kioskIds.map((kioskId) => String(kioskId || "").toUpperCase()));
+    const legacyProjects = legacyKioskIds.size
+      ? kioskProjects.filter((projectId) => kiosks.some((kiosk) => (
+          projectId === kiosk.projectId && legacyKioskIds.has(String(kiosk.kioskId || "").toUpperCase())
+        )))
+      : kioskProjects;
+
+    return { ...service, projectIds: legacyProjects, kioskIds: [] };
+  });
 
   return {
     jobs: Array.isArray(persistedData.jobs) ? persistedData.jobs : [],
     payments: Array.isArray(persistedData.payments) ? persistedData.payments : [],
-    services: persistedServices,
-    pricing: normalizePricing(persistedData.pricing || persistedSettings.pricing, persistedServices),
-    kiosks: persistedKiosks.map((kiosk) => normalizeSuperAdminKiosk({
-      projectId: kiosk.projectId || projects[0]?.projectId || "default-project",
-      ...kiosk
-    })),
+    services,
+    pricing: normalizePricing(persistedData.pricing || persistedSettings.pricing, services),
+    kiosks,
     projects,
     kioskAdmins,
     refunds: Array.isArray(persistedData.refunds) ? persistedData.refunds : [],
+    releases: Array.isArray(persistedData.releases)
+      ? persistedData.releases.map((release) => normalizeKioskRelease(release)).filter(Boolean)
+      : [],
     config: normalizeConfigMeta(persistedData.config || persistedSettings.config, persistedData.updatedAt)
   };
 }
@@ -528,6 +612,7 @@ function dataSnapshot() {
     projects: db.projects,
     kioskAdmins: db.kioskAdmins,
     refunds: db.refunds,
+    releases: db.releases,
     config: db.config,
     updatedAt: new Date().toISOString()
   };
@@ -575,14 +660,56 @@ function serviceRates(serviceId) {
   return db.pricing[serviceId] || db.services.find((service) => service.id === serviceId)?.pricing || DEFAULT_PRICING.print;
 }
 
-function servicesForKiosk(kioskId = "") {
-  const id = String(kioskId || "").trim();
-  return db.services.filter((service) => !id || !service.kioskIds.length || service.kioskIds.includes(id));
-}
-
 function kioskForConfig(kioskId = "") {
   const id = String(kioskId || "").trim().toUpperCase();
   return db.kiosks.find((kiosk) => String(kiosk.kioskId || "").toUpperCase() === id) || null;
+}
+
+function serviceAppliesToKiosk(service = {}, kiosk = null, kioskId = "") {
+  const id = String(kioskId || kiosk?.kioskId || "").trim().toUpperCase();
+  const projectId = slug(kiosk?.projectId || "", "");
+  const projectIds = Array.isArray(service.projectIds) ? service.projectIds.map((item) => slug(item, "")).filter(Boolean) : [];
+  const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((item) => String(item || "").toUpperCase()).filter(Boolean) : [];
+
+  if (projectIds.length) {
+    return Boolean(projectId && projectIds.includes(projectId));
+  }
+
+  if (kioskIds.length) {
+    return Boolean(id && kioskIds.includes(id));
+  }
+
+  return true;
+}
+
+function servicesForKiosk(kioskId = "") {
+  const id = String(kioskId || "").trim().toUpperCase();
+  const kiosk = kioskForConfig(id);
+  return db.services.filter((service) => !id || serviceAppliesToKiosk(service, kiosk, id));
+}
+
+const DEFAULT_KIOSK_CUSTOMER_SETTINGS = Object.freeze({
+  bw: true,
+  color: true,
+  copies: true
+});
+
+function normalizeKioskCustomerSettings(settings = {}, existing = {}) {
+  const source = {
+    ...DEFAULT_KIOSK_CUSTOMER_SETTINGS,
+    ...(existing && typeof existing === "object" ? existing : {}),
+    ...(settings && typeof settings === "object" ? settings : {})
+  };
+
+  const normalized = Object.fromEntries(
+    Object.keys(DEFAULT_KIOSK_CUSTOMER_SETTINGS).map((key) => [key, source[key] !== false])
+  );
+
+  if (!normalized.bw && !normalized.color) {
+    normalized.bw = true;
+  }
+
+  return normalized;
 }
 
 function kioskConfigResponse(kioskId = "") {
@@ -601,11 +728,13 @@ function kioskConfigResponse(kioskId = "") {
       kioskId: kiosk.kioskId,
       name: kiosk.name,
       branch: kiosk.branch,
+      projectId: kiosk.projectId,
       status: kiosk.status,
       printer: kiosk.printer,
       scanner: kiosk.scanner,
       appVersion: kiosk.appVersion,
-      lastOnline: kiosk.lastOnline
+      lastOnline: kiosk.lastOnline,
+      customerSettings: normalizeKioskCustomerSettings(kiosk.customerSettings)
     } : null,
     config: db.config,
     services: filteredServices.map((service) => ({
@@ -963,6 +1092,19 @@ function projectIdsForAdmin(session = {}) {
   ].filter(Boolean));
 }
 
+function projectIdsWithKiosks() {
+  return new Set(db.kiosks.map((kiosk) => slug(kiosk.projectId, "")).filter(Boolean));
+}
+
+function projectIdsWithKiosksForAdmin(session = {}) {
+  const allowedProjects = projectIdsForAdmin(session);
+  return new Set(
+    db.kiosks
+      .map((kiosk) => slug(kiosk.projectId, ""))
+      .filter((projectId) => projectId && allowedProjects.has(projectId))
+  );
+}
+
 function kioskIdsForAdmin(session = {}) {
   if (session.role === "super-admin") {
     return new Set(db.kiosks.map((kiosk) => String(kiosk.kioskId || "").toUpperCase()));
@@ -982,6 +1124,10 @@ function kioskIdsForAdmin(session = {}) {
 function projectsForAdmin(session = {}) {
   const allowed = projectIdsForAdmin(session);
   return db.projects.filter((project) => allowed.has(project.projectId));
+}
+
+function adminCanAccessProject(session = {}, projectId = "") {
+  return projectIdsForAdmin(session).has(slug(projectId, ""));
 }
 
 function kiosksForAdmin(session = {}) {
@@ -1011,17 +1157,23 @@ function refundsForJobs(jobs = [], payments = []) {
 
 function servicesForAdmin(session = {}, kioskId = "") {
   const allowed = kioskIdsForAdmin(session);
+  const allowedProjects = projectIdsWithKiosksForAdmin(session);
   const requestedKioskId = String(kioskId || "").trim().toUpperCase();
 
   if (requestedKioskId) {
     if (!allowed.has(requestedKioskId)) return [];
-    return db.services.filter((service) => !service.kioskIds.length || service.kioskIds.includes(requestedKioskId));
+    const kiosk = db.kiosks.find((item) => String(item.kioskId || "").toUpperCase() === requestedKioskId) || null;
+    return db.services.filter((service) => serviceAppliesToKiosk(service, kiosk, requestedKioskId));
   }
 
-  return db.services.filter((service) => (
-    !service.kioskIds.length ||
-    service.kioskIds.some((id) => allowed.has(String(id || "").toUpperCase()))
-  ));
+  return db.services.filter((service) => {
+    const projectIds = Array.isArray(service.projectIds) ? service.projectIds.map((item) => slug(item, "")).filter(Boolean) : [];
+    const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((id) => String(id || "").toUpperCase()).filter(Boolean) : [];
+
+    if (projectIds.length) return projectIds.some((id) => allowedProjects.has(id));
+    if (kioskIds.length) return kioskIds.some((id) => allowed.has(id));
+    return true;
+  });
 }
 
 function pricingForServices(serviceList = []) {
@@ -1033,13 +1185,21 @@ function pricingForServices(serviceList = []) {
 
 function mergeAdminServices(session = {}, incomingServices = [], incomingPricing = null) {
   const allowedKioskIds = kioskIdsForAdmin(session);
-  if (!allowedKioskIds.size) {
+  const allowedProjectIds = projectIdsWithKiosksForAdmin(session);
+  if (!allowedKioskIds.size && !allowedProjectIds.size) {
     return null;
   }
 
   const allowedExistingIds = new Set(servicesForAdmin(session).map((service) => service.id));
   const normalizedIncoming = normalizeServices(incomingServices)
     .map((service) => {
+      const existing = db.services.find((item) => item.id === service.id) || {};
+      const requestedProjects = Array.isArray(service.projectIds) ? service.projectIds.map((id) => slug(id, "")).filter(Boolean) : [];
+      const scopedProjectIds = requestedProjects.length
+        ? requestedProjects.filter((id) => allowedProjectIds.has(id))
+        : (Array.isArray(existing.projectIds) && existing.projectIds.length
+          ? existing.projectIds.filter((id) => allowedProjectIds.has(id))
+          : [...allowedProjectIds]);
       const requestedIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((id) => String(id || "").toUpperCase()) : [];
       const scopedIds = requestedIds.length
         ? requestedIds.filter((id) => allowedKioskIds.has(id))
@@ -1047,10 +1207,12 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
 
       return {
         ...service,
-        kioskIds: requestedIds.length ? scopedIds : service.kioskIds
+        projectIds: scopedProjectIds,
+        kioskIds: requestedIds.length ? scopedIds : []
       };
     })
     .filter((service) => {
+      if (service.projectIds?.length) return service.projectIds.some((id) => allowedProjectIds.has(slug(id, "")));
       if (!allowedExistingIds.has(service.id)) return true;
       if (!service.kioskIds.length) return true;
       return service.kioskIds.some((id) => allowedKioskIds.has(String(id || "").toUpperCase()));
@@ -1058,7 +1220,7 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
 
   const incomingIds = new Set(normalizedIncoming.map((service) => service.id));
   db.services = [
-    ...db.services.filter((service) => !(allowedExistingIds.has(service.id) && incomingIds.has(service.id))),
+    ...db.services.filter((service) => !allowedExistingIds.has(service.id)),
     ...normalizedIncoming
   ];
 
@@ -1975,6 +2137,138 @@ function validateKioskActivationRequest(body = {}) {
   };
 }
 
+function normalizeReleaseVersion(value = "") {
+  return String(value || "")
+    .trim()
+    .replace(/^v/i, "")
+    .replace(/[^0-9A-Za-z.+-]/g, "")
+    .slice(0, 64);
+}
+
+function compareReleaseVersions(left, right) {
+  const parse = (value) => {
+    const [core, prerelease = ""] = normalizeReleaseVersion(value).split("-", 2);
+    return {
+      core: core.split(".").map((part) => Number(part) || 0),
+      prerelease
+    };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  const length = Math.max(a.core.length, b.core.length, 3);
+
+  for (let index = 0; index < length; index += 1) {
+    const difference = (a.core[index] || 0) - (b.core[index] || 0);
+    if (difference) return difference > 0 ? 1 : -1;
+  }
+
+  if (a.prerelease === b.prerelease) return 0;
+  if (!a.prerelease) return 1;
+  if (!b.prerelease) return -1;
+  return a.prerelease.localeCompare(b.prerelease);
+}
+
+function normalizeKioskRelease(record = {}, existing = {}) {
+  const next = { ...existing, ...record };
+  const version = normalizeReleaseVersion(existing.version || next.version);
+  if (!version) return null;
+
+  const channel = String(next.channel || "production").trim().toLowerCase() === "staging"
+    ? "staging"
+    : "production";
+  const rolloutPercentage = Math.max(0, Math.min(100, Number(next.rolloutPercentage ?? 100) || 0));
+
+  return {
+    ...next,
+    releaseId: String(existing.releaseId || next.releaseId || `REL-${channel}-${version}`).trim(),
+    version,
+    channel,
+    downloadUrl: String(next.downloadUrl || "").trim(),
+    sha256: String(next.sha256 || "").trim().toLowerCase(),
+    signature: String(next.signature || "").trim(),
+    signatureAlgorithm: "RSA-SHA256",
+    signingKeyId: String(next.signingKeyId || "primary").trim().slice(0, 64),
+    sizeBytes: Math.max(0, Math.round(Number(next.sizeBytes || 0))),
+    rolloutPercentage,
+    targetKioskIds: [...new Set((Array.isArray(next.targetKioskIds)
+      ? next.targetKioskIds
+      : String(next.targetKioskIds || "").split(","))
+      .map((item) => String(item || "").trim().toUpperCase())
+      .filter(Boolean))],
+    mandatory: next.mandatory === true || String(next.mandatory).toLowerCase() === "true",
+    active: next.active !== false && String(next.active).toLowerCase() !== "false",
+    notes: String(next.notes || "").trim().slice(0, 2000),
+    publishedAt: next.publishedAt || existing.publishedAt || isoNow(),
+    createdAt: existing.createdAt || next.createdAt || isoNow(),
+    updatedAt: isoNow()
+  };
+}
+
+function validateReleaseRecord(release) {
+  if (!release?.version) return "Release version is required.";
+  if (!/^https:\/\//i.test(release.downloadUrl)) return "Release download URL must use HTTPS.";
+  if (!/^[a-f0-9]{64}$/i.test(release.sha256)) return "Release SHA-256 must contain 64 hexadecimal characters.";
+  if (!release.signature) return "A build signature is required.";
+  if (!Number.isFinite(release.sizeBytes) || release.sizeBytes < 1000000) return "Release size must be at least 1 MB.";
+  return "";
+}
+
+function validateKioskDevice(input = {}) {
+  const kioskId = String(input.kioskId || "").trim().toUpperCase();
+  const deviceId = normalizeActivationDeviceId(input.deviceId || "");
+  const kiosk = db.kiosks.find((item) => String(item.kioskId || "").toUpperCase() === kioskId);
+
+  if (!kioskId || !deviceId) return { status: 400, error: "Kiosk ID and device identity are required." };
+  if (!kiosk || !kiosk.activatedAt) return { status: 403, error: "This kiosk has not been activated." };
+  if (normalizeActivationDeviceId(kiosk.activationDeviceId) !== deviceId) {
+    return { status: 403, error: "Device identity does not match this kiosk activation." };
+  }
+
+  return { kiosk, kioskId, deviceId };
+}
+
+function releaseRolloutIncludesKiosk(release, kioskId) {
+  if (release.targetKioskIds.length) return release.targetKioskIds.includes(kioskId);
+  if (release.rolloutPercentage >= 100) return true;
+  if (release.rolloutPercentage <= 0) return false;
+
+  const bucket = Number.parseInt(
+    crypto.createHash("sha256").update(`${release.releaseId}:${kioskId}`).digest("hex").slice(0, 8),
+    16
+  ) % 10000;
+  return bucket < Math.round(release.rolloutPercentage * 100);
+}
+
+function releaseForKiosk(kiosk, currentVersion, requestedChannel = "") {
+  const channel = String(requestedChannel || kiosk.updateChannel || "production").trim().toLowerCase() === "staging"
+    ? "staging"
+    : "production";
+
+  return db.releases
+    .filter((release) => release.active && release.channel === channel)
+    .filter((release) => compareReleaseVersions(release.version, currentVersion) > 0)
+    .filter((release) => releaseRolloutIncludesKiosk(release, kiosk.kioskId))
+    .sort((left, right) => compareReleaseVersions(right.version, left.version))[0] || null;
+}
+
+function publicReleaseManifest(release) {
+  if (!release) return null;
+  return {
+    releaseId: release.releaseId,
+    version: release.version,
+    channel: release.channel,
+    downloadUrl: release.downloadUrl,
+    sha256: release.sha256,
+    signature: release.signature,
+    signatureAlgorithm: release.signatureAlgorithm,
+    signingKeyId: release.signingKeyId,
+    sizeBytes: release.sizeBytes,
+    mandatory: release.mandatory,
+    notes: release.notes,
+    publishedAt: release.publishedAt
+  };
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -2032,6 +2326,7 @@ function normalizeSuperAdminKiosk(record = {}, existing = {}) {
   const next = { ...existing, ...record };
   const kioskId = String(existing.kioskId || next.kioskId || `KIOSK-${Date.now()}`).trim().toUpperCase();
   const setupCode = String(next.setupCode || existing.setupCode || crypto.randomBytes(4).toString("hex").toUpperCase()).trim().toUpperCase();
+  const customerSettings = normalizeKioskCustomerSettings(next.customerSettings, existing.customerSettings);
 
   return {
     ...next,
@@ -2046,7 +2341,18 @@ function normalizeSuperAdminKiosk(record = {}, existing = {}) {
     printer: String(next.printer || "unknown").trim(),
     scanner: String(next.scanner || "unknown").trim(),
     appVersion: String(next.appVersion || "1.0.0").trim(),
+    updateChannel: String(next.updateChannel || existing.updateChannel || "production").trim().toLowerCase() === "staging" ? "staging" : "production",
+    updateStatus: KIOSK_UPDATE_STATUSES.has(String(next.updateStatus || "").toLowerCase())
+      ? String(next.updateStatus).toLowerCase()
+      : "current",
+    updateTargetVersion: normalizeReleaseVersion(next.updateTargetVersion || ""),
+    updateLastCheckAt: next.updateLastCheckAt || null,
+    updateLastAttemptAt: next.updateLastAttemptAt || null,
+    updateCompletedAt: next.updateCompletedAt || null,
+    updateLastError: String(next.updateLastError || "").trim().slice(0, 1000),
+    updateMessage: String(next.updateMessage || "").trim().slice(0, 1000),
     setupCode,
+    customerSettings,
     activatedAt: next.activatedAt || existing.activatedAt || null,
     activationDeviceId: normalizeActivationDeviceId(next.activationDeviceId || existing.activationDeviceId || next.deviceId || ""),
     lastOnline: next.lastOnline || isoNow()
@@ -2129,6 +2435,14 @@ function superAdminCollectionConfig(collection) {
         db.services = normalizeServices(items);
       },
       normalize: normalizeSuperAdminService
+    },
+    releases: {
+      key: "releaseId",
+      get: () => db.releases,
+      set: (items) => {
+        db.releases = items.map((release) => normalizeKioskRelease(release)).filter(Boolean);
+      },
+      normalize: normalizeKioskRelease
     }
   }[collection];
 }
@@ -2164,14 +2478,16 @@ function syncServiceSavePricing(pricing = null) {
 }
 
 function saveSuperAdminCollection(collection) {
-  if (collection === "services" || collection === "pricing") {
+  if (collection === "services" || collection === "pricing" || collection === "kiosks") {
     if (collection === "services") {
       syncServiceSavePricing();
-    } else {
+    } else if (collection === "pricing") {
       syncServicePricing();
     }
     touchConfig(`${collection}-updated`);
-    saveSettings();
+    if (collection === "services" || collection === "pricing") {
+      saveSettings();
+    }
   }
 
   saveData();
@@ -2191,6 +2507,7 @@ function superAdminSummary() {
     jobs: db.jobs.length,
     payments: db.payments.length,
     refunds: db.refunds.length,
+    releases: db.releases.length,
     gross,
     net: gross - refunds,
     failedJobs: db.jobs.filter((job) => /failed/i.test(job.printStatus || "")).length,
@@ -2209,7 +2526,7 @@ function buildSuperAdminHierarchy() {
     const jobIds = new Set(kioskJobs.map((job) => job.jobId));
     const serviceIds = new Set(kioskJobs.map((job) => job.service));
     const kioskServices = db.services
-      .filter((service) => !service.kioskIds.length || service.kioskIds.includes(kiosk.kioskId) || serviceIds.has(service.id))
+      .filter((service) => serviceAppliesToKiosk(service, kiosk, kiosk.kioskId) || serviceIds.has(service.id))
       .map((service) => {
         const serviceJobs = kioskJobs.filter((job) => job.service === service.id);
         const revenue = serviceJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
@@ -2253,6 +2570,7 @@ function superAdminSnapshot() {
       projects: db.projects,
       kioskAdmins: db.kioskAdmins.map(publicKioskAdmin),
       refunds: db.refunds,
+      releases: db.releases,
       config: db.config
     },
     config: db.config,
@@ -2265,8 +2583,15 @@ function findCollectionItem(config, itemId) {
 }
 
 function validateSuperAdminRecord(collection, record) {
-  if (collection === "projects" && record.adminId && !db.kioskAdmins.some((admin) => admin.adminId === record.adminId)) {
-    return "Select an existing kiosk admin for this project.";
+  if (collection === "releases") {
+    return validateReleaseRecord(record);
+  }
+
+  if (collection === "projects") {
+    if (!record.adminId) return "Select a kiosk admin before saving this project.";
+    if (!db.kioskAdmins.some((admin) => admin.adminId === record.adminId)) {
+      return "Select an existing kiosk admin for this project.";
+    }
   }
 
   if (collection === "kiosks" && !db.projects.some((project) => project.projectId === record.projectId)) {
@@ -2276,6 +2601,17 @@ function validateSuperAdminRecord(collection, record) {
   if (collection === "kioskAdmins") {
     const invalidProject = (record.projectIds || []).find((projectId) => !db.projects.some((project) => project.projectId === projectId));
     if (invalidProject) return `Project ${invalidProject} does not exist.`;
+  }
+
+  if (collection === "services") {
+    if (!(record.projectIds || []).length) {
+      return "Create a kiosk under a project before assigning this service.";
+    }
+    const invalidProject = (record.projectIds || []).find((projectId) => !db.projects.some((project) => project.projectId === projectId));
+    if (invalidProject) return `Project ${invalidProject} does not exist.`;
+    const assignableProjectIds = projectIdsWithKiosks();
+    const projectWithoutKiosk = (record.projectIds || []).find((projectId) => !assignableProjectIds.has(projectId));
+    if (projectWithoutKiosk) return `Project ${projectWithoutKiosk} has no kiosk assigned. Create a kiosk under it before assigning services.`;
   }
 
   return "";
@@ -2499,6 +2835,69 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdminSession(req, res, "super-admin")) return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/kiosk/update/manifest") {
+    const validation = validateKioskDevice(Object.fromEntries(url.searchParams.entries()));
+    if (validation.error) return json(res, validation.status, { error: validation.error });
+
+    const currentVersion = normalizeReleaseVersion(url.searchParams.get("currentVersion") || validation.kiosk.appVersion || "0.0.0");
+    const requestedChannel = url.searchParams.get("channel") || validation.kiosk.updateChannel || "production";
+    const release = releaseForKiosk(validation.kiosk, currentVersion, requestedChannel);
+    const checkedAt = isoNow();
+
+    Object.assign(validation.kiosk, {
+      status: "online",
+      appVersion: currentVersion || validation.kiosk.appVersion,
+      updateChannel: String(requestedChannel).toLowerCase() === "staging" ? "staging" : "production",
+      updateStatus: release ? "available" : "current",
+      updateTargetVersion: release?.version || "",
+      updateLastCheckAt: checkedAt,
+      lastOnline: checkedAt
+    });
+    if (!release) validation.kiosk.updateLastError = "";
+    saveData();
+
+    return json(res, 200, {
+      ok: true,
+      updateAvailable: Boolean(release),
+      currentVersion,
+      manifest: publicReleaseManifest(release),
+      checkedAt
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/kiosk/update/status") {
+    const validation = validateKioskDevice(body);
+    if (validation.error) return json(res, validation.status, { error: validation.error });
+
+    const status = String(body.status || "current").trim().toLowerCase();
+    if (!KIOSK_UPDATE_STATUSES.has(status)) {
+      return json(res, 400, { error: "Unknown kiosk update status." });
+    }
+
+    const now = isoNow();
+    const currentVersion = normalizeReleaseVersion(body.currentVersion || validation.kiosk.appVersion || "0.0.0");
+    Object.assign(validation.kiosk, {
+      status: "online",
+      appVersion: currentVersion || validation.kiosk.appVersion,
+      updateChannel: String(body.channel || validation.kiosk.updateChannel || "production").toLowerCase() === "staging" ? "staging" : "production",
+      updateStatus: status,
+      updateTargetVersion: normalizeReleaseVersion(body.targetVersion || validation.kiosk.updateTargetVersion || ""),
+      updateLastCheckAt: now,
+      updateLastError: status === "failed" || status === "rollback" ? String(body.error || "Update failed.").slice(0, 1000) : "",
+      updateMessage: String(body.error || "").slice(0, 1000),
+      lastOnline: now
+    });
+
+    if (["downloading", "installing", "rollback"].includes(status)) validation.kiosk.updateLastAttemptAt = now;
+    if (status === "updated") {
+      validation.kiosk.updateCompletedAt = now;
+      validation.kiosk.updateTargetVersion = "";
+    }
+    saveData();
+
+    return json(res, 200, { ok: true, kiosk: validation.kiosk });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/kiosk/config") {
     return json(res, 200, kioskConfigResponse(url.searchParams.get("kioskId") || ""));
   }
@@ -2565,7 +2964,7 @@ const server = http.createServer(async (req, res) => {
     return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename));
   }
 
-  if (req.method === "POST" && url.pathname === "/api/admin/service-image") {
+  if (req.method === "POST" && (url.pathname === "/api/admin/service-image" || url.pathname === "/api/super-admin/service-image")) {
     if (!isMultipart) {
       return json(res, 400, { error: "Upload must use multipart/form-data." });
     }
@@ -2959,8 +3358,17 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/kiosks") {
+    const rawKiosk = body.kiosk || body;
+    const fallbackProjectId = projectsForAdmin(adminSession)[0]?.projectId || "";
+    const projectId = slug(rawKiosk.projectId || fallbackProjectId, "");
+
+    if (!projectId || !adminCanAccessProject(adminSession, projectId)) {
+      return json(res, 403, { error: "Select a project allocated to this kiosk admin before creating the kiosk." });
+    }
+
     const kiosk = normalizeSuperAdminKiosk({
-      ...(body.kiosk || body),
+      ...rawKiosk,
+      projectId,
       adminId: adminSession.adminId
     });
 
@@ -2971,6 +3379,55 @@ const server = http.createServer(async (req, res) => {
     db.kiosks.push(kiosk);
     saveData();
     return json(res, 201, { kiosk, kiosks: kiosksForAdmin(adminSession) });
+  }
+
+  if ((req.method === "PUT" || req.method === "PATCH") && url.pathname.startsWith("/api/admin/kiosks/")) {
+    const kioskId = decodeSegment(url.pathname.split("/")[4] || "").toUpperCase();
+    const index = db.kiosks.findIndex((item) => String(item.kioskId || "").toUpperCase() === kioskId);
+
+    if (index === -1) {
+      return json(res, 404, { error: "Kiosk not found." });
+    }
+
+    if (!adminCanAccessKiosk(adminSession, kioskId)) {
+      return json(res, 403, { error: "This kiosk is outside your assigned projects." });
+    }
+
+    const rawKiosk = body.kiosk || body;
+    const projectId = slug(rawKiosk.projectId || db.kiosks[index].projectId, "");
+
+    if (!projectId || !adminCanAccessProject(adminSession, projectId)) {
+      return json(res, 403, { error: "Select a project allocated to this kiosk admin." });
+    }
+
+    const kiosk = normalizeSuperAdminKiosk({
+      ...db.kiosks[index],
+      ...rawKiosk,
+      kioskId: db.kiosks[index].kioskId,
+      projectId,
+      adminId: adminSession.adminId
+    }, db.kiosks[index]);
+
+    db.kiosks[index] = kiosk;
+    saveData();
+    return json(res, 200, { kiosk, kiosks: kiosksForAdmin(adminSession) });
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/admin/kiosks/")) {
+    const kioskId = decodeSegment(url.pathname.split("/")[4] || "").toUpperCase();
+    const index = db.kiosks.findIndex((item) => String(item.kioskId || "").toUpperCase() === kioskId);
+
+    if (index === -1) {
+      return json(res, 404, { error: "Kiosk not found." });
+    }
+
+    if (!adminCanAccessKiosk(adminSession, kioskId)) {
+      return json(res, 403, { error: "This kiosk is outside your assigned projects." });
+    }
+
+    const [deleted] = db.kiosks.splice(index, 1);
+    saveData();
+    return json(res, 200, { deleted, kiosks: kiosksForAdmin(adminSession) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/system-status") {

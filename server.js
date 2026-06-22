@@ -218,7 +218,7 @@ const SERVICE_CATALOG = DEFAULT_SERVICES.map((service) => ({
   title: service.title
 }));
 
-let db = createRuntimeDb(loadData(), loadSettings());
+let db;
 let databaseSaveQueue = Promise.resolve();
 
 function numericPrice(value, fallback = 0) {
@@ -3512,6 +3512,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function startServer() {
+  db = createRuntimeDb(loadData(), loadSettings());
   await initializePersistence();
 
   server.listen(PORT, HOST || undefined, () => {

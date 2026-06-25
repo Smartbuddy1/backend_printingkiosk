@@ -1856,7 +1856,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#1769f5" />
-        <title>${escapeHtml(title)} | PrintHub</title>
+        <title>${escapeHtml(title)} | Print Kiosk</title>
         <link rel="icon" type="image/png" href="/assets/printhub-mark.png" />
         <style>
           :root{--blue:#1769f5;--blue-dark:#0d47ae;--ink:#14213d;--muted:#64748b;--line:#dbe4ef;--soft:#f3f7fd;--green:#15a669;--red:#c2413b;}
@@ -1913,7 +1913,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
       <body>
         <main class="page">
           <div class="shell">
-            <a class="brand" href="#" aria-label="PrintHub"><img src="/assets/printhub-logo.png" alt="PrintHub" /></a>
+            <a class="brand" href="#" aria-label="Print Kiosk"><img src="/assets/printhub-logo.png" alt="Print Kiosk" /></a>
             <section class="card">
               <header class="card-head">
                 <span class="eyebrow">${escapeHtml(eyebrow)}</span>
@@ -1942,7 +1942,7 @@ function renderMobileStatusPage({ title, heading, description, note, warning = f
         <div class="status-icon ${warning ? "warn" : ""}">${warning ? "!" : "&#10003;"}</div>
         <h2>${warning ? "Scan again" : "You are all set"}</h2>
         <p>${escapeHtml(note)}</p>
-        <div class="status-note">${warning ? "Return to the PrintHub kiosk and generate a new QR code." : "Return to the kiosk to preview your documents and continue to payment."}</div>
+        <div class="status-note">${warning ? "Return to the Print Kiosk and generate a new QR code." : "Return to the kiosk to preview your documents and continue to payment."}</div>
       </div>
     `
   });
@@ -1953,7 +1953,7 @@ function renderMobileUploadPage(session) {
     return renderMobileStatusPage({
       title: "Upload link expired",
       heading: "This upload link has expired",
-      description: "For your privacy, each PrintHub QR code works for one short upload session.",
+      description: "For your privacy, each Print Kiosk QR code works for one short upload session.",
       note: "No files were uploaded. Use the kiosk screen to create a fresh upload code.",
       warning: true
     });
@@ -2037,7 +2037,7 @@ function renderMobileUploadPage(session) {
     title: "Upload documents",
     eyebrow: "Secure kiosk upload",
     heading: "Upload your documents",
-    description: `Send up to ${MAX_FILES_PER_JOB} files directly to the PrintHub kiosk you just scanned.`,
+    description: `Send up to ${MAX_FILES_PER_JOB} files directly to the Print Kiosk you just scanned.`,
     content: `
       <div class="steps" aria-label="Upload steps">
         <div class="step"><span>1</span>Choose</div>
@@ -2057,7 +2057,7 @@ function renderMobileUploadPage(session) {
           <ul class="file-list" id="file-list"></ul>
         </div>
         <p class="privacy">Files are securely linked to this kiosk session and are not shown to other users.</p>
-        <button class="submit" id="submit-button" type="submit" disabled>Send to PrintHub Kiosk</button>
+        <button class="submit" id="submit-button" type="submit" disabled>Send to Print Kiosk</button>
       </form>
     `,
     script
@@ -3101,7 +3101,7 @@ const server = http.createServer(async (req, res) => {
       return html(res, 400, renderMobileStatusPage({
         title: "Unsupported file",
         heading: "That file type is not supported",
-        description: "PrintHub accepts PDF, JPG, JPEG, and PNG documents from this mobile upload page.",
+        description: "Print Kiosk accepts PDF, JPG, JPEG, and PNG documents from this mobile upload page.",
         note: "Nothing was added to the print session.",
         warning: true
       }));
@@ -3115,7 +3115,7 @@ const server = http.createServer(async (req, res) => {
     return html(res, 200, renderMobileStatusPage({
       title: "Documents sent",
       heading: `${files.length} file${files.length === 1 ? "" : "s"} sent successfully`,
-      description: "Your documents are now ready on the PrintHub kiosk screen.",
+      description: "Your documents are now ready on the Print Kiosk screen.",
       note: "You can close this page. Continue on the kiosk to review print options and pay."
     }));
   }

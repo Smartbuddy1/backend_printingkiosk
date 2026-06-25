@@ -1,12 +1,1060 @@
 {
-  "jobs": [],
-  "payments": [],
-  "kiosks": [],
-  "kioskAdmins": [],
-  "projects": [],
+  "jobs": [
+    {
+      "jobId": "JOB-1782200360703-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-23T07:39:20.712Z",
+      "completedAt": "2026-06-23T07:39:20.777Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782360271756-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T04:04:31.766Z",
+      "completedAt": "2026-06-25T04:04:31.862Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782363282444-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T04:54:42.460Z",
+      "completedAt": "2026-06-25T04:54:42.548Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782363421957-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T04:57:01.971Z",
+      "completedAt": "2026-06-25T04:57:02.006Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782363465577-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T04:57:45.584Z",
+      "completedAt": "2026-06-25T04:57:45.610Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782363510163-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T04:58:30.169Z",
+      "completedAt": "2026-06-25T04:58:30.194Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782363602205-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:00:02.219Z",
+      "completedAt": "2026-06-25T05:00:02.262Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782363602648-02",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "10 documents",
+      "fileType": "MULTIPLE",
+      "pageCount": 10,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 20,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:00:02.654Z",
+      "completedAt": "2026-06-25T05:00:02.677Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782364020498-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:07:00.503Z",
+      "completedAt": "2026-06-25T05:07:00.527Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782364020933-02",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "10 documents",
+      "fileType": "MULTIPLE",
+      "pageCount": 10,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 20,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:07:00.939Z",
+      "completedAt": "2026-06-25T05:07:00.959Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782364706454-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:18:26.466Z",
+      "completedAt": "2026-06-25T05:18:26.500Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782364706860-02",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "10 documents",
+      "fileType": "MULTIPLE",
+      "pageCount": 10,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 20,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:18:26.869Z",
+      "completedAt": "2026-06-25T05:18:26.892Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782365071031-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:24:31.030Z",
+      "completedAt": "2026-06-25T05:24:31.057Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782365107796-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:25:07.795Z",
+      "completedAt": "2026-06-25T05:25:07.822Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782365171069-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:26:11.072Z",
+      "completedAt": "2026-06-25T05:26:11.103Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782365171317-02",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "10 documents",
+      "fileType": "MULTIPLE",
+      "pageCount": 10,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 20,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:26:11.316Z",
+      "completedAt": "2026-06-25T05:26:11.325Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782365860453-01",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "customer-document.pdf",
+      "fileType": "PDF",
+      "pageCount": 1,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 2,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:37:40.464Z",
+      "completedAt": "2026-06-25T05:37:40.571Z",
+      "rate": 2
+    },
+    {
+      "jobId": "JOB-1782365860782-02",
+      "kioskId": "KIOSK-2",
+      "service": "print",
+      "fileName": "10 documents",
+      "fileType": "MULTIPLE",
+      "pageCount": 10,
+      "copies": 1,
+      "colorMode": "bw",
+      "paperSize": "A4",
+      "amount": 20,
+      "paymentStatus": "Payment Pending",
+      "printStatus": "Completed",
+      "createdAt": "2026-06-25T05:37:40.786Z",
+      "completedAt": "2026-06-25T05:37:40.857Z",
+      "rate": 2
+    }
+  ],
+  "payments": [
+    {
+      "paymentId": "PAY-1782200361287",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782200360703-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T4ze0x7qe5khqA",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-23T07:39:21.287Z"
+    },
+    {
+      "paymentId": "PAY-1782360272334",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782360271756-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5j3NJF4asi0qa",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T04:04:32.334Z"
+    },
+    {
+      "paymentId": "PAY-1782363283175",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782363282444-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5juNrPfro6Bv8",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T04:54:43.175Z"
+    },
+    {
+      "paymentId": "PAY-1782363422366",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782363421957-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5jwpnR7HeaZRW",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T04:57:02.366Z"
+    },
+    {
+      "paymentId": "PAY-1782363466008",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782363465577-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5jxbNnT3YG0Jm",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T04:57:46.008Z"
+    },
+    {
+      "paymentId": "PAY-1782363510538",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782363510163-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5jyO20Jq41Lpf",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T04:58:30.538Z"
+    },
+    {
+      "paymentId": "PAY-1782363602704",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782363602205-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5k00alOboByZU",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:00:02.704Z"
+    },
+    {
+      "paymentId": "PAY-1782363602997",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782363602648-02",
+      "amount": 20,
+      "amountInPaise": 2000,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5k00yeUtD0tGK",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:00:02.997Z"
+    },
+    {
+      "paymentId": "PAY-1782364020784",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782364020498-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5k7Mz79i0wq0p",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:07:00.784Z"
+    },
+    {
+      "paymentId": "PAY-1782364021093",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782364020933-02",
+      "amount": 20,
+      "amountInPaise": 2000,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5k7NIPpP62oKn",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:07:01.093Z"
+    },
+    {
+      "paymentId": "PAY-1782364706853",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782364706454-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5kJRtiDnhfR8J",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:18:26.853Z"
+    },
+    {
+      "paymentId": "PAY-1782364707069",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782364706860-02",
+      "amount": 20,
+      "amountInPaise": 2000,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5kJS31spkiw7l",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:18:27.069Z"
+    },
+    {
+      "paymentId": "PAY-1782365071563",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782365071031-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5kPryjLm6aFgv",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:24:31.563Z"
+    },
+    {
+      "paymentId": "PAY-1782365108264",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782365107796-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5kQW3NBtBnHlj",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:25:08.264Z"
+    },
+    {
+      "paymentId": "PAY-1782365171752",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782365171069-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5kRdFdmSlj23P",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:26:11.752Z"
+    },
+    {
+      "paymentId": "PAY-1782365171759",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782365171317-02",
+      "amount": 20,
+      "amountInPaise": 2000,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5kRdDIJDf4dMk",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:26:11.759Z"
+    },
+    {
+      "paymentId": "PAY-1782365862053",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782365860782-02",
+      "amount": 20,
+      "amountInPaise": 2000,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5kdmrRV5sFaMd",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:37:42.053Z"
+    },
+    {
+      "paymentId": "PAY-1782365862061",
+      "gateway": "razorpay",
+      "jobId": "JOB-1782365860453-01",
+      "amount": 2,
+      "amountInPaise": 200,
+      "currency": "INR",
+      "paymentMethod": "Razorpay Checkout",
+      "razorpayOrderId": "order_T5kdmsYsgfApSb",
+      "razorpayMode": "test",
+      "status": "Pending",
+      "createdAt": "2026-06-25T05:37:42.061Z"
+    }
+  ],
+  "services": [
+    {
+      "id": "print",
+      "icon": "PR",
+      "title": "Print Document",
+      "titleHi": "",
+      "titleMr": "",
+      "description": "Upload PDF, Word, or image files and print after preview.",
+      "descriptionHi": "",
+      "descriptionMr": "",
+      "defaultPages": 5,
+      "mode": "upload",
+      "imageUrl": "",
+      "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": [],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
+      "pricing": {
+        "bw": 2,
+        "color": 10
+      },
+      "templates": []
+    },
+    {
+      "id": "scan",
+      "icon": "SC",
+      "title": "Scan Document",
+      "titleHi": "",
+      "titleMr": "",
+      "description": "Scan paper documents to PDF with receipt and admin tracking.",
+      "descriptionHi": "",
+      "descriptionMr": "",
+      "defaultPages": 3,
+      "mode": "upload",
+      "imageUrl": "",
+      "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": [],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
+      "pricing": {
+        "bw": 4,
+        "color": 8
+      },
+      "templates": []
+    },
+    {
+      "id": "copy",
+      "icon": "CP",
+      "title": "Copy Document",
+      "titleHi": "",
+      "titleMr": "",
+      "description": "Create quick photocopies with B/W or color pricing.",
+      "descriptionHi": "",
+      "descriptionMr": "",
+      "defaultPages": 2,
+      "mode": "upload",
+      "imageUrl": "",
+      "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": [],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
+      "pricing": {
+        "bw": 2,
+        "color": 10
+      },
+      "templates": []
+    },
+    {
+      "id": "govt-form",
+      "icon": "GP",
+      "title": "Govt Form Print",
+      "titleHi": "",
+      "titleMr": "",
+      "description": "Print blank government form templates without upload.",
+      "descriptionHi": "",
+      "descriptionMr": "",
+      "defaultPages": 1,
+      "mode": "template",
+      "imageUrl": "",
+      "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": [],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
+      "pricing": {
+        "bw": 3,
+        "color": 12
+      },
+      "templates": [
+        {
+          "id": "birth-certificate",
+          "title": "Birth Certificate Form",
+          "description": "Blank Form No. 5 birth certificate template.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Name",
+            "Sex",
+            "Date of birth",
+            "Place of birth",
+            "Mother name",
+            "Father name"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        },
+        {
+          "id": "voter-form-6",
+          "title": "Form 6",
+          "description": "Blank voter registration application template.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Applicant",
+            "Age / DOB",
+            "Address",
+            "Constituency",
+            "Mobile"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        },
+        {
+          "id": "voter-form-8",
+          "title": "Form 8",
+          "description": "Blank voter correction or shifting application template.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Applicant",
+            "EPIC No.",
+            "Correction type",
+            "Correct details",
+            "Mobile"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        },
+        {
+          "id": "domicile-certificate",
+          "title": "Domicile Certificate Form",
+          "description": "Blank domicile certificate application format.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Applicant",
+            "DOB",
+            "Address",
+            "Years of residence",
+            "Mobile"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        },
+        {
+          "id": "income-certificate",
+          "title": "Income Certificate Form",
+          "description": "Blank income certificate request template.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Applicant",
+            "Occupation",
+            "Annual income",
+            "Purpose",
+            "Mobile"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        },
+        {
+          "id": "caste-certificate",
+          "title": "Caste Certificate Form",
+          "description": "Blank caste certificate application template.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Applicant",
+            "Caste",
+            "Sub caste",
+            "Address",
+            "Mobile"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        }
+      ]
+    },
+    {
+      "id": "college-form",
+      "icon": "CF",
+      "title": "College Form Print",
+      "titleHi": "",
+      "titleMr": "",
+      "description": "Print admission, exam, certificate, and fee forms.",
+      "descriptionHi": "",
+      "descriptionMr": "",
+      "defaultPages": 1,
+      "mode": "template",
+      "imageUrl": "",
+      "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": [],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
+      "pricing": {
+        "bw": 3,
+        "color": 12
+      },
+      "templates": [
+        {
+          "id": "admission-form",
+          "title": "Admission Form",
+          "description": "Student admission details and guardian section.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Student",
+            "Course",
+            "DOB",
+            "Mobile",
+            "Signature"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        },
+        {
+          "id": "exam-registration",
+          "title": "Exam Registration Form",
+          "description": "Semester exam subject and fee declaration.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Student",
+            "Roll No.",
+            "Semester",
+            "Subjects",
+            "Mobile"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        },
+        {
+          "id": "scholarship-form",
+          "title": "Scholarship Form",
+          "description": "Student scholarship request and document list.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Student",
+            "Course",
+            "Income",
+            "Category",
+            "Mobile"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        },
+        {
+          "id": "bonafide-request",
+          "title": "Bonafide Certificate Request",
+          "description": "Certificate request form for college office.",
+          "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
+          "fields": [
+            "Student",
+            "Roll No.",
+            "Course",
+            "Purpose",
+            "Mobile"
+          ],
+          "imageUrl": "",
+          "documentType": "image"
+        }
+      ]
+    },
+    {
+      "id": "certificate",
+      "icon": "CT",
+      "title": "Certificate Print",
+      "titleHi": "",
+      "titleMr": "",
+      "description": "Print certificates and supporting documents safely.",
+      "descriptionHi": "",
+      "descriptionMr": "",
+      "defaultPages": 1,
+      "mode": "upload",
+      "imageUrl": "",
+      "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": [],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
+      "pricing": {
+        "bw": 5,
+        "color": 15
+      },
+      "templates": []
+    }
+  ],
+  "pricing": {
+    "print": {
+      "bw": 2,
+      "color": 10
+    },
+    "scan": {
+      "bw": 4,
+      "color": 8
+    },
+    "copy": {
+      "bw": 2,
+      "color": 10
+    },
+    "govt-form": {
+      "bw": 3,
+      "color": 12
+    },
+    "college-form": {
+      "bw": 3,
+      "color": 12
+    },
+    "certificate": {
+      "bw": 5,
+      "color": 15
+    }
+  },
+  "kiosks": [
+    {
+      "projectId": "default-project",
+      "kioskId": "KIOSK-NB07",
+      "name": "NB07",
+      "branch": "Local Branch",
+      "adminId": "default-admin",
+      "status": "online",
+      "printer": "unknown",
+      "scanner": "unknown",
+      "appVersion": "1.0.0",
+      "lastOnline": "2026-06-22T11:29:44.096Z",
+      "updateChannel": "production",
+      "updateStatus": "current",
+      "updateTargetVersion": "",
+      "updateLastCheckAt": null,
+      "updateLastAttemptAt": null,
+      "updateCompletedAt": null,
+      "updateLastError": "",
+      "updateMessage": "",
+      "setupCode": "410E5754",
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true,
+        "paperSize": true,
+        "sides": true,
+        "orientation": true,
+        "pageRange": true
+      },
+      "activatedAt": null,
+      "activationDeviceId": ""
+    },
+    {
+      "projectId": "default-project",
+      "kioskId": "KIOSK-2",
+      "name": "Kiosk 2",
+      "branch": "Local Branch",
+      "adminId": "default-admin",
+      "status": "online",
+      "printer": "unknown",
+      "scanner": "unknown",
+      "appVersion": "1.0.0",
+      "lastOnline": "2026-06-25T05:00:00.000Z",
+      "updateChannel": "production",
+      "updateStatus": "current",
+      "updateTargetVersion": "",
+      "updateLastCheckAt": null,
+      "updateLastAttemptAt": null,
+      "updateCompletedAt": null,
+      "updateLastError": "",
+      "updateMessage": "",
+      "setupCode": "",
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true,
+        "paperSize": true,
+        "sides": true,
+        "orientation": true,
+        "pageRange": true
+      },
+      "activatedAt": null,
+      "activationDeviceId": ""
+    }
+  ],
+  "projects": [
+    {
+      "projectId": "default-project",
+      "name": "Default Project",
+      "adminId": "default-admin",
+      "description": "",
+      "status": "active",
+      "createdAt": "2026-06-22T11:29:44.097Z"
+    }
+  ],
+  "kioskAdmins": [
+    {
+      "adminId": "default-admin",
+      "name": "Kiosk Admin",
+      "email": "admin@printingkiosk.local",
+      "password": "admin1234",
+      "status": "active",
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": []
+    }
+  ],
   "refunds": [],
-  "services": [],
-  "pricing": {},
-  "config": {},
-  "updatedAt": ""
+  "releases": [],
+  "config": {
+    "version": 1782127784098,
+    "updatedAt": "2026-06-22T11:29:44.098Z",
+    "reason": "initial"
+  },
+  "updatedAt": "2026-06-25T05:37:42.061Z"
 }

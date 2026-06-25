@@ -49,6 +49,7 @@ const UNSAFE_PRODUCTION_VALUES = new Set([
   "change-this-admin-password",
   "change-this-super-admin-password",
   "change-this-kiosk-admin-password",
+  "change-this-client-password",
   "local-admin-password",
   "local-super-admin-password",
   "admin@printingkiosk.local",
@@ -96,14 +97,14 @@ function defaultKioskId() {
 }
 
 const ADMIN_CREDENTIALS = {
-  email: configValue(["KIOSK_ADMIN_EMAIL", "ADMIN_EMAIL"], LOCAL_ONLY_ADMIN_EMAIL, "KIOSK_ADMIN_EMAIL"),
-  password: configValue(["KIOSK_ADMIN_PASSWORD", "ADMIN_PASSWORD"], LOCAL_ONLY_ADMIN_PASSWORD, "KIOSK_ADMIN_PASSWORD")
+  email: configValue(["CLIENT_EMAIL", "KIOSK_ADMIN_EMAIL", "ADMIN_EMAIL"], LOCAL_ONLY_ADMIN_EMAIL, "CLIENT_EMAIL"),
+  password: configValue(["CLIENT_PASSWORD", "KIOSK_ADMIN_PASSWORD", "ADMIN_PASSWORD"], LOCAL_ONLY_ADMIN_PASSWORD, "CLIENT_PASSWORD")
 };
 const SUPER_ADMIN_CREDENTIALS = {
   email: configValue(["SUPER_ADMIN_EMAIL", "SUPER_EMAIL"], LOCAL_ONLY_SUPER_ADMIN_EMAIL, "SUPER_ADMIN_EMAIL"),
   password: configValue(["SUPER_ADMIN_PASSWORD", "SUPER_PASSWORD"], LOCAL_ONLY_SUPER_ADMIN_PASSWORD, "SUPER_ADMIN_PASSWORD")
 };
-const DEFAULT_KIOSK_ADMIN_ID = process.env.KIOSK_ADMIN_ID || "default-admin";
+const DEFAULT_KIOSK_ADMIN_ID = process.env.CLIENT_ID || process.env.KIOSK_ADMIN_ID || "default-admin";
 const FRONTEND_FILES = new Set([
   "index.html",
   "admin.html",
@@ -263,6 +264,9 @@ function normalizeTemplates(templates) {
     .map((template, index) => {
       const title = String(template?.title || `Template ${index + 1}`).trim();
       const id = slug(template?.id || title, `template-${index + 1}`);
+      const imageUrl = String(template?.imageUrl || "").trim();
+      const documentTypeSource = String(template?.documentType || imageUrl).toLowerCase();
+      const documentType = documentTypeSource === "pdf" || documentTypeSource.includes(".pdf") ? "pdf" : "image";
 
       return {
         id,
@@ -271,8 +275,9 @@ function normalizeTemplates(templates) {
         pages: Math.max(1, Math.min(20, Number(template?.pages || 1))),
         paperSize: ["Auto", "A4", "A3", "Letter", "Legal"].find((size) => size.toLowerCase() === String(template?.paperSize || "Auto").trim().toLowerCase()) || "Auto",
         orientation: String(template?.orientation || "portrait").toLowerCase() === "landscape" ? "landscape" : "portrait",
-        fields: normalizeFields(template?.fields).length ? normalizeFields(template?.fields) : ["Applicant", "Address", "Mobile", "Purpose", "Signature"],
-        imageUrl: String(template?.imageUrl || "").trim()
+        fields: normalizeFields(template?.fields),
+        imageUrl,
+        documentType
       };
     })
     .filter((template) => template.title);
@@ -350,7 +355,11 @@ function normalizeServices(services) {
         id,
         icon: String(service?.icon || fallback.icon || title.slice(0, 2) || "SV").trim().toUpperCase().slice(0, 3),
         title,
+        titleHi: String(service?.titleHi || fallback.titleHi || "").trim(),
+        titleMr: String(service?.titleMr || fallback.titleMr || "").trim(),
         description: String(service?.description || fallback.description || "Customer service.").trim(),
+        descriptionHi: String(service?.descriptionHi || fallback.descriptionHi || "").trim(),
+        descriptionMr: String(service?.descriptionMr || fallback.descriptionMr || "").trim(),
         defaultPages: Math.max(1, Math.min(99, Number(service?.defaultPages || fallback.defaultPages || 1))),
         mode,
         imageUrl: String(service?.imageUrl || fallback.imageUrl || "").trim(),
@@ -421,7 +430,7 @@ function normalizeAdminId(value, fallback = DEFAULT_KIOSK_ADMIN_ID) {
 function defaultKioskAdmin() {
   return {
     adminId: normalizeAdminId(DEFAULT_KIOSK_ADMIN_ID),
-    name: process.env.KIOSK_ADMIN_NAME || "Kiosk Admin",
+    name: process.env.CLIENT_NAME || process.env.KIOSK_ADMIN_NAME || "Client",
     email: ADMIN_CREDENTIALS.email,
     password: ADMIN_CREDENTIALS.password,
     status: "active",
@@ -440,7 +449,7 @@ function normalizeKioskAdmin(record = {}, existing = {}) {
   return {
     ...next,
     adminId,
-    name: String(next.name || "Kiosk Admin").trim(),
+    name: String(next.name || "Client").trim(),
     email: String(next.email || "").trim().toLowerCase(),
     password: String(password || "").trim(),
     status: String(next.status || "active").trim().toLowerCase() === "disabled" ? "disabled" : "active",
@@ -565,7 +574,7 @@ function defaultKiosk() {
     name: process.env.KIOSK_NAME || os.hostname(),
     branch: process.env.KIOSK_BRANCH || "Local Branch",
     projectId: process.env.KIOSK_PROJECT_ID || "default-project",
-    adminId: process.env.KIOSK_ADMIN_ID || "",
+    adminId: process.env.CLIENT_ID || process.env.KIOSK_ADMIN_ID || "",
     status: "online",
     printer: "unknown",
     scanner: "unknown",
@@ -691,7 +700,11 @@ function servicesForKiosk(kioskId = "") {
 const DEFAULT_KIOSK_CUSTOMER_SETTINGS = Object.freeze({
   bw: true,
   color: true,
-  copies: true
+  copies: true,
+  paperSize: true,
+  sides: true,
+  orientation: true,
+  pageRange: true
 });
 
 function normalizeKioskCustomerSettings(settings = {}, existing = {}) {
@@ -851,13 +864,14 @@ function imageContentType(filename) {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
+    ".pdf": "application/pdf",
     ".webp": "image/webp"
   }[extension] || "application/octet-stream";
 }
 
 function safeUploadedImageName(filename) {
   const extension = path.extname(filename).toLowerCase();
-  const allowed = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp"]);
+  const allowed = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
   const normalizedExtension = allowed.has(extension) ? extension : ".png";
   const base = path.basename(filename, extension)
     .toLowerCase()
@@ -916,7 +930,7 @@ function authenticatedAdminResponse(body = {}) {
     return {
       status: 409,
       body: {
-        error: "These credentials match both admin roles. Use different super admin and kiosk admin credentials."
+        error: "These credentials match both admin roles. Use different super admin and client credentials."
       }
     };
   }
@@ -989,7 +1003,7 @@ function kioskAdminUnlockResponse(body = {}) {
     return {
       status: 409,
       body: {
-        error: "These credentials match both admin roles. Use different super admin and kiosk admin credentials."
+        error: "These credentials match both admin roles. Use different super admin and client credentials."
       }
     };
   }
@@ -1019,7 +1033,7 @@ function kioskAdminUnlockResponse(body = {}) {
       return {
         status: 403,
         body: {
-          error: "This kiosk admin is not assigned to this kiosk."
+          error: "This client is not assigned to this kiosk."
         }
       };
     }
@@ -1157,7 +1171,7 @@ function refundsForJobs(jobs = [], payments = []) {
 
 function servicesForAdmin(session = {}, kioskId = "") {
   const allowed = kioskIdsForAdmin(session);
-  const allowedProjects = projectIdsWithKiosksForAdmin(session);
+  const allowedProjects = projectIdsForAdmin(session);
   const requestedKioskId = String(kioskId || "").trim().toUpperCase();
 
   if (requestedKioskId) {
@@ -1185,8 +1199,8 @@ function pricingForServices(serviceList = []) {
 
 function mergeAdminServices(session = {}, incomingServices = [], incomingPricing = null) {
   const allowedKioskIds = kioskIdsForAdmin(session);
-  const allowedProjectIds = projectIdsWithKiosksForAdmin(session);
-  if (!allowedKioskIds.size && !allowedProjectIds.size) {
+  const allowedProjectIds = projectIdsForAdmin(session);
+  if (!allowedProjectIds.size) {
     return null;
   }
 
@@ -1249,8 +1263,8 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
 function isAllowedServiceImage(file) {
   if (!file?.content?.length || !file.filename) return false;
   const extension = path.extname(file.filename).toLowerCase();
-  const allowedExtensions = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp"]);
-  return file.mimeType.startsWith("image/") || allowedExtensions.has(extension);
+  const allowedExtensions = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
+  return file.mimeType.startsWith("image/") || file.mimeType === "application/pdf" || allowedExtensions.has(extension);
 }
 
 function readBody(req) {
@@ -1335,6 +1349,42 @@ function amountToPaise(amount) {
 
 function safeReceipt(jobId) {
   return String(jobId || `JOB-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 40);
+}
+
+function backendOrigin(req) {
+  return (process.env.BACKEND_URL || publicOrigin(req)).replace(/\/+$/, "");
+}
+
+function paymentPageUrl(req, paymentId) {
+  const pageOrigin = publicOrigin(req);
+  const url = new URL("/index.html", `${pageOrigin}/`);
+  url.searchParams.set("mobilePayment", paymentId);
+  url.searchParams.set("backendUrl", backendOrigin(req));
+  return url.toString();
+}
+
+function checkoutPayload(payment, job, req = null) {
+  const config = razorpayConfig();
+  return {
+    paymentId: payment.paymentId,
+    key: config.keyId,
+    orderId: payment.razorpayOrderId,
+    amount: payment.amountInPaise,
+    currency: payment.currency || "INR",
+    name: "Smart Printing Kiosk",
+    description: `${job.fileName} | ${job.pageCount} page(s)`,
+    prefill: {
+      name: "Kiosk Customer",
+      contact: "",
+      email: ""
+    },
+    notes: {
+      jobId: job.jobId,
+      kioskId: job.kioskId,
+      service: job.service
+    },
+    paymentUrl: req ? paymentPageUrl(req, payment.paymentId) : ""
+  };
 }
 
 function secureCompare(expected, actual) {
@@ -2588,9 +2638,9 @@ function validateSuperAdminRecord(collection, record) {
   }
 
   if (collection === "projects") {
-    if (!record.adminId) return "Select a kiosk admin before saving this project.";
+    if (!record.adminId) return "Select a client before saving this project.";
     if (!db.kioskAdmins.some((admin) => admin.adminId === record.adminId)) {
-      return "Select an existing kiosk admin for this project.";
+      return "Select an existing client for this project.";
     }
   }
 
@@ -2605,13 +2655,10 @@ function validateSuperAdminRecord(collection, record) {
 
   if (collection === "services") {
     if (!(record.projectIds || []).length) {
-      return "Create a kiosk under a project before assigning this service.";
+      return "Select at least one existing project before assigning this service.";
     }
     const invalidProject = (record.projectIds || []).find((projectId) => !db.projects.some((project) => project.projectId === projectId));
     if (invalidProject) return `Project ${invalidProject} does not exist.`;
-    const assignableProjectIds = projectIdsWithKiosks();
-    const projectWithoutKiosk = (record.projectIds || []).find((projectId) => !assignableProjectIds.has(projectId));
-    if (projectWithoutKiosk) return `Project ${projectWithoutKiosk} has no kiosk assigned. Create a kiosk under it before assigning services.`;
   }
 
   return "";
@@ -2726,11 +2773,11 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
       return json(res, 409, { error: "Move this project's kiosks before deleting it." });
     }
     if (collection === "projects" && db.kioskAdmins.some((admin) => (admin.projectIds || []).includes(itemId))) {
-      return json(res, 409, { error: "Remove this project from its kiosk admin allocation before deleting it." });
+      return json(res, 409, { error: "Remove this project from its client allocation before deleting it." });
     }
     if (collection === "kioskAdmins") {
       if (items.length <= 1) {
-        return json(res, 409, { error: "At least one kiosk admin must remain." });
+        return json(res, 409, { error: "At least one client must remain." });
       }
       if (db.projects.some((project) => project.adminId === normalizeAdminId(itemId)) || db.kiosks.some((kiosk) => kiosk.adminId && normalizeAdminId(kiosk.adminId) === normalizeAdminId(itemId))) {
         return json(res, 409, { error: "Move this admin's projects and kiosks to another admin before deleting." });
@@ -2814,7 +2861,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
     const result = authenticatedAdminResponse(body);
     if (result.body.role !== "kiosk-admin") {
-      return json(res, 401, { error: "Invalid kiosk admin credentials." });
+      return json(res, 401, { error: "Invalid client credentials." });
     }
     return json(res, result.status, result.body);
   }
@@ -2974,11 +3021,11 @@ const server = http.createServer(async (req, res) => {
       parts.find((part) => part.filename);
 
     if (!isAllowedServiceImage(file)) {
-      return json(res, 400, { error: "Upload a PNG, JPG, GIF, or WebP image." });
+      return json(res, 400, { error: "Upload a PNG, JPG, GIF, WebP, or PDF template document." });
     }
 
-    if (file.content.length > 3 * 1024 * 1024) {
-      return json(res, 413, { error: "Image must be 3 MB or smaller." });
+    if (file.content.length > 8 * 1024 * 1024) {
+      return json(res, 413, { error: "Template document must be 8 MB or smaller." });
     }
 
     ensureUploadDirs();
@@ -2987,6 +3034,7 @@ const server = http.createServer(async (req, res) => {
 
     return json(res, 201, {
       imageUrl: `${publicOrigin(req)}/uploads/service-images/${encodeURIComponent(filename)}`,
+      documentType: path.extname(filename).toLowerCase() === ".pdf" ? "pdf" : "image",
       filename,
       size: file.content.length
     });
@@ -3106,6 +3154,38 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { jobId: job.jobId, amount: calculatePrice(job), pricing: db.pricing });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/payment/qr") {
+    const targetUrl = String(url.searchParams.get("url") || "").trim();
+
+    if (!/^https?:\/\//i.test(targetUrl)) {
+      return json(res, 400, { error: "A public http(s) payment URL is required." });
+    }
+
+    const qrSvg = await QRCode.toString(targetUrl, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      type: "svg",
+      width: 260
+    });
+
+    return json(res, 200, { url: targetUrl, qrSvg });
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/payment/")) {
+    const paymentId = decodeURIComponent(url.pathname.split("/").pop() || "");
+    const payment = db.payments.find((item) => item.paymentId === paymentId);
+    if (!payment) return json(res, 404, { error: "Payment not found." });
+
+    const job = findJob(payment.jobId);
+    if (!job) return json(res, 404, { error: "Payment job was not found." });
+
+    return json(res, 200, {
+      payment,
+      job,
+      checkout: checkoutPayload(payment, job, req)
+    });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/payment/create") {
     const config = razorpayConfig();
 
@@ -3158,19 +3238,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 201, {
       job,
       payment,
-      checkout: {
-        key: config.keyId,
-        orderId: razorpayOrder.id,
-        amount,
-        currency: "INR",
-        name: "Smart Printing Kiosk",
-        description: `${job.fileName} | ${job.pageCount} page(s)`,
-        prefill: {
-          name: "Kiosk Customer",
-          contact: "",
-          email: ""
-        }
-      }
+      checkout: checkoutPayload(payment, job, req)
     });
   }
 
@@ -3294,10 +3362,6 @@ const server = http.createServer(async (req, res) => {
 
   const adminSession = url.pathname.startsWith("/api/admin/") ? readAdminSession(req) : null;
 
-  if (url.pathname.startsWith("/api/admin/") && req.method !== "GET") {
-    return json(res, 403, { error: "Kiosk admin access is read-only. Changes can only be made by the super admin." });
-  }
-
   if (req.method === "GET" && url.pathname === "/api/admin/dashboard") {
     const adminJobs = jobsForAdmin(adminSession);
     const adminKiosks = kiosksForAdmin(adminSession);
@@ -3357,13 +3421,99 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { projects: projectsForAdmin(adminSession) });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/admin/projects") {
+    const rawProject = body.project || body;
+    const project = normalizeSuperAdminProject({
+      ...rawProject,
+      adminId: adminSession.adminId
+    });
+
+    if (db.projects.some((item) => item.projectId === project.projectId)) {
+      return json(res, 409, { error: "Project ID already exists." });
+    }
+
+    db.projects.push(project);
+    db.kioskAdmins = db.kioskAdmins.map((admin) => {
+      if (admin.adminId !== adminSession.adminId) return admin;
+      return {
+        ...admin,
+        projectIds: [...new Set([...(admin.projectIds || []), project.projectId])]
+      };
+    });
+    saveData();
+    return json(res, 201, { project, projects: projectsForAdmin(adminSession) });
+  }
+
+  if ((req.method === "PUT" || req.method === "PATCH") && url.pathname.startsWith("/api/admin/projects/")) {
+    const projectId = slug(decodeSegment(url.pathname.split("/")[4] || ""), "");
+    const index = db.projects.findIndex((item) => item.projectId === projectId);
+
+    if (index === -1) {
+      return json(res, 404, { error: "Project not found." });
+    }
+
+    if (!adminCanAccessProject(adminSession, projectId)) {
+      return json(res, 403, { error: "This project is outside your account." });
+    }
+
+    const rawProject = body.project || body;
+    const project = normalizeSuperAdminProject({
+      ...db.projects[index],
+      ...rawProject,
+      projectId: db.projects[index].projectId,
+      adminId: adminSession.adminId
+    }, db.projects[index]);
+
+    db.projects[index] = project;
+    saveData();
+    return json(res, 200, { project, projects: projectsForAdmin(adminSession) });
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/admin/projects/")) {
+    const projectId = slug(decodeSegment(url.pathname.split("/")[4] || ""), "");
+    const index = db.projects.findIndex((item) => item.projectId === projectId);
+
+    if (index === -1) {
+      return json(res, 404, { error: "Project not found." });
+    }
+
+    if (!adminCanAccessProject(adminSession, projectId)) {
+      return json(res, 403, { error: "This project is outside your account." });
+    }
+
+    const [deleted] = db.projects.splice(index, 1);
+    db.kiosks = db.kiosks.filter((kiosk) => slug(kiosk.projectId, "") !== projectId);
+    db.services = db.services
+      .map((service) => ({
+        ...service,
+        projectIds: (service.projectIds || []).filter((id) => slug(id, "") !== projectId)
+      }))
+      .filter((service) => (service.projectIds || []).length || (service.kioskIds || []).length);
+    db.kioskAdmins = db.kioskAdmins.map((admin) => ({
+      ...admin,
+      projectIds: (admin.projectIds || []).filter((id) => slug(id, "") !== projectId)
+    }));
+    db.pricing = normalizePricing(db.pricing, db.services);
+    touchConfig("project-deleted");
+    saveSettings();
+    saveData();
+    return json(res, 200, {
+      deleted,
+      projects: projectsForAdmin(adminSession),
+      kiosks: kiosksForAdmin(adminSession),
+      services: servicesForAdmin(adminSession),
+      pricing: pricingForServices(servicesForAdmin(adminSession)),
+      config: db.config
+    });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/admin/kiosks") {
     const rawKiosk = body.kiosk || body;
     const fallbackProjectId = projectsForAdmin(adminSession)[0]?.projectId || "";
     const projectId = slug(rawKiosk.projectId || fallbackProjectId, "");
 
     if (!projectId || !adminCanAccessProject(adminSession, projectId)) {
-      return json(res, 403, { error: "Select a project allocated to this kiosk admin before creating the kiosk." });
+      return json(res, 403, { error: "Select a project allocated to this client before creating the kiosk." });
     }
 
     const kiosk = normalizeSuperAdminKiosk({
@@ -3397,7 +3547,7 @@ const server = http.createServer(async (req, res) => {
     const projectId = slug(rawKiosk.projectId || db.kiosks[index].projectId, "");
 
     if (!projectId || !adminCanAccessProject(adminSession, projectId)) {
-      return json(res, 403, { error: "Select a project allocated to this kiosk admin." });
+      return json(res, 403, { error: "Select a project allocated to this client." });
     }
 
     const kiosk = normalizeSuperAdminKiosk({

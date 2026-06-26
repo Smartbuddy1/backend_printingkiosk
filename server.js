@@ -853,6 +853,27 @@ function publicOrigin(req) {
   return (process.env.PUBLIC_BASE_URL || process.env.BACKEND_URL || `http://${req.headers.host || `localhost:${PORT}`}`).replace(/\/+$/, "");
 }
 
+function publicFrontendOrigin(req) {
+  const configuredUrl = (
+    process.env.PUBLIC_FRONTEND_URL ||
+    process.env.FRONTEND_PUBLIC_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.KIOSK_URL ||
+    ""
+  ).replace(/\/+$/, "");
+
+  if (configuredUrl) {
+    try {
+      const url = new URL(configuredUrl);
+      if (/^https?:$/.test(url.protocol)) return configuredUrl;
+    } catch {
+      // Fall back to the backend origin below.
+    }
+  }
+
+  return publicOrigin(req);
+}
+
 function uploadBaseUrl(req, session = null) {
   return (session?.publicBaseUrl || publicOrigin(req)).replace(/\/+$/, "");
 }
@@ -1356,8 +1377,14 @@ function backendOrigin(req) {
 }
 
 function paymentPageUrl(req, paymentId) {
-  const pageOrigin = publicOrigin(req);
-  const url = new URL("/index.html", `${pageOrigin}/`);
+  const pageOrigin = publicFrontendOrigin(req);
+  const url = new URL(pageOrigin);
+  const lastSegment = url.pathname.split("/").pop() || "";
+  if (url.pathname === "/" || !lastSegment.includes(".")) {
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}/index.html`;
+  }
+  url.search = "";
+  url.hash = "";
   url.searchParams.set("mobilePayment", paymentId);
   url.searchParams.set("backendUrl", backendOrigin(req));
   return url.toString();

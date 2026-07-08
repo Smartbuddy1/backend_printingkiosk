@@ -758,6 +758,38 @@ function kioskConfigResponse(kioskId = "") {
   };
 }
 
+function publicServiceRecord(service = {}) {
+  const {
+    projectIds,
+    kioskIds,
+    ...publicService
+  } = service;
+
+  return {
+    ...publicService
+  };
+}
+
+function publicServicesResponse(kioskId = "") {
+  const filteredServices = kioskId ? servicesForKiosk(kioskId) : db.services;
+  const enabledServices = filteredServices.filter((service) => service.enabled !== false);
+  const pricing = Object.fromEntries(
+    enabledServices.map((service) => [
+      service.id,
+      db.pricing[service.id] || service.pricing || { bw: 0, color: 0 }
+    ])
+  );
+
+  return {
+    config: db.config,
+    services: enabledServices.map((service) => publicServiceRecord({
+      ...service,
+      pricing: pricing[service.id] || service.pricing
+    })),
+    pricing
+  };
+}
+
 function snapshotHasData(snapshot = {}) {
   return ["jobs", "payments", "services", "kiosks", "refunds"].some((key) => Array.isArray(snapshot[key]) && snapshot[key].length);
 }
@@ -2878,6 +2910,10 @@ const server = http.createServer(async (req, res) => {
       payments: razorpayStatus(),
       time: new Date().toISOString()
     });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/public/services") {
+    return json(res, 200, publicServicesResponse(url.searchParams.get("kioskId") || ""));
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/login") {

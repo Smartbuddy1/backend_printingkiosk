@@ -1012,7 +1012,7 @@
       "updateCompletedAt": null,
       "updateLastError": "",
       "updateMessage": "",
-      "setupCode": "",
+      "setupCode": "009ED342",
       "customerSettings": {
         "bw": true,
         "color": true,
@@ -1040,13 +1040,14 @@
     {
       "adminId": "default-admin",
       "name": "Kiosk Admin",
-      "email": "admin@printingkiosk.local",
+      "email": "admin@gmail.com",
       "password": "admin1234",
       "status": "active",
       "projectIds": [
         "default-project"
       ],
-      "kioskIds": []
+      "kioskIds": [],
+      "lastLoginAt": "2026-07-08T10:31:05.850Z"
     }
   ],
   "refunds": [],
@@ -1056,5 +1057,5 @@
     "updatedAt": "2026-06-22T11:29:44.098Z",
     "reason": "initial"
   },
-  "updatedAt": "2026-06-25T05:37:42.061Z"
+  "updatedAt": "2026-07-08T10:31:05.850Z"
 }

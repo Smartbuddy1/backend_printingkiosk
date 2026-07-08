@@ -38,7 +38,7 @@ const mobileUploadSessions = new Map();
 const adminSessions = new Map();
 const processedRazorpayWebhookEvents = new Set();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
-const LOCAL_ONLY_ADMIN_EMAIL = "admin@printingkiosk.local";
+const LOCAL_ONLY_ADMIN_EMAIL = "admin@gmail.com";
 const LOCAL_ONLY_SUPER_ADMIN_EMAIL = "superadmin@printingkiosk.local";
 const LOCAL_ONLY_ADMIN_PASSWORD = "local-admin-password";
 const LOCAL_ONLY_SUPER_ADMIN_PASSWORD = "local-super-admin-password";

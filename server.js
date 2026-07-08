@@ -697,6 +697,145 @@ function servicesForKiosk(kioskId = "") {
   return db.services.filter((service) => !id || serviceAppliesToKiosk(service, kiosk, id));
 }
 
+function findKioskAdminByPublicIdentifier(identifier = "") {
+  const rawIdentifier = String(identifier || "").trim();
+  if (!rawIdentifier) return null;
+
+  const email = rawIdentifier.toLowerCase();
+  const adminId = normalizeAdminId(rawIdentifier, "");
+
+  return db.kioskAdmins.find((admin) => (
+    admin.status !== "disabled" &&
+    (String(admin.email || "").toLowerCase() === email || admin.adminId === adminId)
+  )) || null;
+}
+
+function addPublicAdminProjectIds(projectIds, admin = {}) {
+  if (!admin?.adminId) return;
+
+  (admin.projectIds || []).forEach((projectId) => {
+    const id = slug(projectId, "");
+    if (id) projectIds.add(id);
+  });
+
+  db.projects
+    .filter((project) => project.adminId === admin.adminId)
+    .forEach((project) => {
+      const id = slug(project.projectId, "");
+      if (id) projectIds.add(id);
+    });
+}
+
+function publicDemoAdminCandidates() {
+  const defaultAdminId = normalizeAdminId(DEFAULT_KIOSK_ADMIN_ID);
+  const activeAdmins = db.kioskAdmins.filter((admin) => admin.status !== "disabled");
+  const adminsWithProjects = activeAdmins.filter((admin) => (
+    (admin.projectIds || []).length ||
+    db.projects.some((project) => project.adminId === admin.adminId)
+  ));
+  const nonDefaultAdmins = adminsWithProjects.filter((admin) => admin.adminId !== defaultAdminId);
+
+  return nonDefaultAdmins.length ? nonDefaultAdmins : adminsWithProjects;
+}
+
+function serviceHasUploadedTemplateForProjects(service = {}, projectIds = new Set()) {
+  const serviceProjectIds = Array.isArray(service.projectIds)
+    ? service.projectIds.map((projectId) => slug(projectId, "")).filter(Boolean)
+    : [];
+
+  if (!serviceProjectIds.some((projectId) => projectIds.has(projectId))) {
+    return false;
+  }
+
+  return Array.isArray(service.templates) && service.templates.some((template) => template.imageUrl);
+}
+
+function publicProjectIdsForScope(scope = {}) {
+  const projectIds = new Set();
+  const requestedProjectId = slug(scope.projectId || "", "");
+
+  if (requestedProjectId) {
+    projectIds.add(requestedProjectId);
+  }
+
+  const adminIdentifier = scope.adminId || scope.adminEmail || "";
+  const requestedAdmin = findKioskAdminByPublicIdentifier(adminIdentifier);
+  if (adminIdentifier && !requestedAdmin) {
+    return projectIds;
+  }
+
+  if (requestedAdmin) {
+    addPublicAdminProjectIds(projectIds, requestedAdmin);
+  }
+
+  const kiosk = kioskForConfig(scope.kioskId);
+  if (kiosk?.projectId) {
+    const kioskProjectId = slug(kiosk.projectId, "");
+    if (kioskProjectId) projectIds.add(kioskProjectId);
+  }
+
+  if (projectIds.size || !scope.demo || adminIdentifier || scope.projectId) {
+    return projectIds;
+  }
+
+  const demoAdmins = publicDemoAdminCandidates();
+  const uploadedProjectIds = new Set();
+
+  demoAdmins.forEach((admin) => {
+    const adminProjectIds = new Set();
+    addPublicAdminProjectIds(adminProjectIds, admin);
+    if (db.services.some((service) => serviceHasUploadedTemplateForProjects(service, adminProjectIds))) {
+      adminProjectIds.forEach((projectId) => uploadedProjectIds.add(projectId));
+    }
+  });
+
+  if (uploadedProjectIds.size) {
+    return uploadedProjectIds;
+  }
+
+  if (demoAdmins.length === 1) {
+    addPublicAdminProjectIds(projectIds, demoAdmins[0]);
+  }
+
+  return projectIds;
+}
+
+function servicesForPublicScope(scope = {}) {
+  const kioskId = String(scope.kioskId || "").trim().toUpperCase();
+  const hasExplicitScope = Boolean(kioskId || scope.projectId || scope.adminId || scope.adminEmail);
+  const hasRequestedAdmin = Boolean(scope.adminId || scope.adminEmail);
+  const hasRequestedProject = Boolean(scope.projectId);
+  const kiosk = kioskForConfig(kioskId);
+
+  if (kioskId && kiosk) {
+    return servicesForKiosk(kioskId);
+  }
+
+  const projectIds = publicProjectIdsForScope(scope);
+  if (projectIds.size) {
+    return db.services.filter((service) => {
+      const serviceProjectIds = Array.isArray(service.projectIds)
+        ? service.projectIds.map((projectId) => slug(projectId, "")).filter(Boolean)
+        : [];
+      const serviceKioskIds = Array.isArray(service.kioskIds)
+        ? service.kioskIds.map((id) => String(id || "").trim().toUpperCase()).filter(Boolean)
+        : [];
+
+      if (serviceProjectIds.length) {
+        return serviceProjectIds.some((projectId) => projectIds.has(projectId));
+      }
+
+      return !serviceKioskIds.length;
+    });
+  }
+
+  if (!hasExplicitScope || (scope.demo && !hasRequestedAdmin && !hasRequestedProject)) {
+    return db.services;
+  }
+
+  return kioskId ? servicesForKiosk(kioskId) : [];
+}
+
 const DEFAULT_KIOSK_CUSTOMER_SETTINGS = Object.freeze({
   bw: true,
   color: true,
@@ -770,8 +909,9 @@ function publicServiceRecord(service = {}) {
   };
 }
 
-function publicServicesResponse(kioskId = "") {
-  const filteredServices = kioskId ? servicesForKiosk(kioskId) : db.services;
+function publicServicesResponse(scope = {}) {
+  const requestScope = typeof scope === "string" ? { kioskId: scope } : scope;
+  const filteredServices = servicesForPublicScope(requestScope);
   const enabledServices = filteredServices.filter((service) => service.enabled !== false);
   const pricing = Object.fromEntries(
     enabledServices.map((service) => [
@@ -2913,7 +3053,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/public/services") {
-    return json(res, 200, publicServicesResponse(url.searchParams.get("kioskId") || ""));
+    return json(res, 200, publicServicesResponse({
+      kioskId: url.searchParams.get("kioskId") || "",
+      projectId: url.searchParams.get("projectId") || url.searchParams.get("project") || "",
+      adminId: url.searchParams.get("adminId") || url.searchParams.get("clientId") || url.searchParams.get("ownerId") || "",
+      adminEmail: url.searchParams.get("adminEmail") || url.searchParams.get("email") || "",
+      demo: url.searchParams.get("demo") === "true" || url.searchParams.get("kioskDemo") === "true"
+    }));
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/login") {

@@ -991,7 +991,8 @@ function frontendContentType(filename) {
   return {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
-    ".js": "text/javascript; charset=utf-8"
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8"
   }[extension] || "application/octet-stream";
 }
 
@@ -1006,15 +1007,28 @@ function serveFrontendFile(res, filename) {
   return binary(res, 200, fs.readFileSync(filePath), frontendContentType(safeName));
 }
 
-function serveFrontendAsset(res, filename) {
-  const safeName = path.basename(filename);
-  const filePath = path.join(FRONTEND_ASSET_DIR, safeName);
+function serveFrontendAsset(res, requestPathname) {
+  const assetRoot = path.resolve(FRONTEND_ASSET_DIR);
+  let relativePath = String(requestPathname || "").replace(/^\/assets\/?/, "");
 
-  if (!FRONTEND_ASSETS.has(safeName) || !filePath.startsWith(FRONTEND_ASSET_DIR) || !fs.existsSync(filePath)) {
+  try {
+    relativePath = decodeURIComponent(relativePath);
+  } catch {
     return json(res, 404, { error: "Frontend asset not found." });
   }
 
-  return binary(res, 200, fs.readFileSync(filePath), imageContentType(safeName));
+  const filePath = path.resolve(assetRoot, relativePath);
+
+  if (
+    filePath !== assetRoot &&
+    !filePath.startsWith(assetRoot + path.sep) ||
+    !fs.existsSync(filePath) ||
+    !fs.statSync(filePath).isFile()
+  ) {
+    return json(res, 404, { error: "Frontend asset not found." });
+  }
+
+  return binary(res, 200, fs.readFileSync(filePath), imageContentType(filePath));
 }
 
 function ensureUploadDirs() {
@@ -1056,6 +1070,8 @@ function imageContentType(filename) {
     ".gif": "image/gif",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
     ".png": "image/png",
     ".pdf": "application/pdf",
     ".webp": "image/webp"
@@ -3030,7 +3046,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/assets/")) {
-    return serveFrontendAsset(res, path.basename(url.pathname));
+    return serveFrontendAsset(res, url.pathname);
   }
 
   const frontendFilename = path.basename(url.pathname);

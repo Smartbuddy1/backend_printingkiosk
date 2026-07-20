@@ -1001,7 +1001,7 @@ function normalizeKioskCustomerSettings(settings = {}, existing = {}) {
 }
 
 function kioskConfigResponse(kioskId = "") {
-  const filteredServices = servicesForKiosk(kioskId);
+  const filteredServices = servicesForKiosk(kioskId).filter((s) => s.enabled !== false);
   const kiosk = kioskForConfig(kioskId);
   const clientBrand = publicKioskClientBrand(clientForKiosk(kiosk));
   const pricing = pricingForServices(filteredServices, kioskId ? [kioskId] : []);

@@ -545,114 +545,6 @@
   ],
   "services": [
     {
-      "id": "print",
-      "icon": "PR",
-      "title": "Print Document",
-      "titleHi": "",
-      "titleMr": "",
-      "description": "Upload PDF, Word, or image files and print after preview.",
-      "descriptionHi": "",
-      "descriptionMr": "",
-      "defaultPages": 5,
-      "mode": "upload",
-      "imageUrl": "",
-      "enabled": true,
-      "projectIds": [
-        "default-project"
-      ],
-      "kioskIds": [],
-      "customerSettings": {
-        "bw": true,
-        "color": true,
-        "copies": true
-      },
-      "printDefaults": {
-        "colorMode": "bw",
-        "copies": 1,
-        "paperSize": "A4",
-        "sides": "single",
-        "orientation": "portrait",
-        "range": "all"
-      },
-      "pricing": {
-        "bw": 2,
-        "color": 10
-      },
-      "templates": []
-    },
-    {
-      "id": "scan",
-      "icon": "SC",
-      "title": "Scan Document",
-      "titleHi": "",
-      "titleMr": "",
-      "description": "Scan paper documents to PDF with receipt and admin tracking.",
-      "descriptionHi": "",
-      "descriptionMr": "",
-      "defaultPages": 3,
-      "mode": "upload",
-      "imageUrl": "",
-      "enabled": true,
-      "projectIds": [
-        "default-project"
-      ],
-      "kioskIds": [],
-      "customerSettings": {
-        "bw": true,
-        "color": true,
-        "copies": true
-      },
-      "printDefaults": {
-        "colorMode": "bw",
-        "copies": 1,
-        "paperSize": "A4",
-        "sides": "single",
-        "orientation": "portrait",
-        "range": "all"
-      },
-      "pricing": {
-        "bw": 4,
-        "color": 8
-      },
-      "templates": []
-    },
-    {
-      "id": "copy",
-      "icon": "CP",
-      "title": "Copy Document",
-      "titleHi": "",
-      "titleMr": "",
-      "description": "Create quick photocopies with B/W or color pricing.",
-      "descriptionHi": "",
-      "descriptionMr": "",
-      "defaultPages": 2,
-      "mode": "upload",
-      "imageUrl": "",
-      "enabled": true,
-      "projectIds": [
-        "default-project"
-      ],
-      "kioskIds": [],
-      "customerSettings": {
-        "bw": true,
-        "color": true,
-        "copies": true
-      },
-      "printDefaults": {
-        "colorMode": "bw",
-        "copies": 1,
-        "paperSize": "A4",
-        "sides": "single",
-        "orientation": "portrait",
-        "range": "all"
-      },
-      "pricing": {
-        "bw": 2,
-        "color": 10
-      },
-      "templates": []
-    },
-    {
       "id": "govt-form",
       "icon": "GP",
       "title": "Govt Form Print",
@@ -791,173 +683,12 @@
           "documentType": "image"
         }
       ]
-    },
-    {
-      "id": "college-form",
-      "icon": "CF",
-      "title": "College Form Print",
-      "titleHi": "",
-      "titleMr": "",
-      "description": "Print admission, exam, certificate, and fee forms.",
-      "descriptionHi": "",
-      "descriptionMr": "",
-      "defaultPages": 1,
-      "mode": "template",
-      "imageUrl": "",
-      "enabled": true,
-      "projectIds": [
-        "default-project"
-      ],
-      "kioskIds": [],
-      "customerSettings": {
-        "bw": true,
-        "color": true,
-        "copies": true
-      },
-      "printDefaults": {
-        "colorMode": "bw",
-        "copies": 1,
-        "paperSize": "A4",
-        "sides": "single",
-        "orientation": "portrait",
-        "range": "all"
-      },
-      "pricing": {
-        "bw": 3,
-        "color": 12
-      },
-      "templates": [
-        {
-          "id": "admission-form",
-          "title": "Admission Form",
-          "description": "Student admission details and guardian section.",
-          "pages": 1,
-          "paperSize": "Auto",
-          "orientation": "portrait",
-          "fields": [
-            "Student",
-            "Course",
-            "DOB",
-            "Mobile",
-            "Signature"
-          ],
-          "imageUrl": "",
-          "documentType": "image"
-        },
-        {
-          "id": "exam-registration",
-          "title": "Exam Registration Form",
-          "description": "Semester exam subject and fee declaration.",
-          "pages": 1,
-          "paperSize": "Auto",
-          "orientation": "portrait",
-          "fields": [
-            "Student",
-            "Roll No.",
-            "Semester",
-            "Subjects",
-            "Mobile"
-          ],
-          "imageUrl": "",
-          "documentType": "image"
-        },
-        {
-          "id": "scholarship-form",
-          "title": "Scholarship Form",
-          "description": "Student scholarship request and document list.",
-          "pages": 1,
-          "paperSize": "Auto",
-          "orientation": "portrait",
-          "fields": [
-            "Student",
-            "Course",
-            "Income",
-            "Category",
-            "Mobile"
-          ],
-          "imageUrl": "",
-          "documentType": "image"
-        },
-        {
-          "id": "bonafide-request",
-          "title": "Bonafide Certificate Request",
-          "description": "Certificate request form for college office.",
-          "pages": 1,
-          "paperSize": "Auto",
-          "orientation": "portrait",
-          "fields": [
-            "Student",
-            "Roll No.",
-            "Course",
-            "Purpose",
-            "Mobile"
-          ],
-          "imageUrl": "",
-          "documentType": "image"
-        }
-      ]
-    },
-    {
-      "id": "certificate",
-      "icon": "CT",
-      "title": "Certificate Print",
-      "titleHi": "",
-      "titleMr": "",
-      "description": "Print certificates and supporting documents safely.",
-      "descriptionHi": "",
-      "descriptionMr": "",
-      "defaultPages": 1,
-      "mode": "upload",
-      "imageUrl": "",
-      "enabled": true,
-      "projectIds": [
-        "default-project"
-      ],
-      "kioskIds": [],
-      "customerSettings": {
-        "bw": true,
-        "color": true,
-        "copies": true
-      },
-      "printDefaults": {
-        "colorMode": "bw",
-        "copies": 1,
-        "paperSize": "A4",
-        "sides": "single",
-        "orientation": "portrait",
-        "range": "all"
-      },
-      "pricing": {
-        "bw": 5,
-        "color": 15
-      },
-      "templates": []
     }
   ],
   "pricing": {
-    "print": {
-      "bw": 2,
-      "color": 10
-    },
-    "scan": {
-      "bw": 4,
-      "color": 8
-    },
-    "copy": {
-      "bw": 2,
-      "color": 10
-    },
     "govt-form": {
       "bw": 3,
       "color": 12
-    },
-    "college-form": {
-      "bw": 3,
-      "color": 12
-    },
-    "certificate": {
-      "bw": 5,
-      "color": 15
     }
   },
   "kiosks": [
@@ -992,38 +723,6 @@
       },
       "activatedAt": null,
       "activationDeviceId": ""
-    },
-    {
-      "projectId": "default-project",
-      "kioskId": "KIOSK-2",
-      "name": "Kiosk 2",
-      "branch": "Local Branch",
-      "adminId": "default-admin",
-      "status": "online",
-      "printer": "unknown",
-      "scanner": "unknown",
-      "appVersion": "1.0.0",
-      "lastOnline": "2026-06-25T05:00:00.000Z",
-      "updateChannel": "production",
-      "updateStatus": "current",
-      "updateTargetVersion": "",
-      "updateLastCheckAt": null,
-      "updateLastAttemptAt": null,
-      "updateCompletedAt": null,
-      "updateLastError": "",
-      "updateMessage": "",
-      "setupCode": "009ED342",
-      "customerSettings": {
-        "bw": true,
-        "color": true,
-        "copies": true,
-        "paperSize": true,
-        "sides": true,
-        "orientation": true,
-        "pageRange": true
-      },
-      "activatedAt": null,
-      "activationDeviceId": ""
     }
   ],
   "projects": [
@@ -1047,15 +746,15 @@
         "default-project"
       ],
       "kioskIds": [],
-      "lastLoginAt": "2026-07-08T10:31:05.850Z"
+      "lastLoginAt": "2026-07-19T10:24:20.913Z"
     }
   ],
   "refunds": [],
   "releases": [],
   "config": {
-    "version": 1782127784098,
-    "updatedAt": "2026-06-22T11:29:44.098Z",
-    "reason": "initial"
+    "version": 1784453959135,
+    "updatedAt": "2026-07-19T09:39:19.135Z",
+    "reason": "kiosks-updated"
   },
-  "updatedAt": "2026-07-08T10:31:05.850Z"
+  "updatedAt": "2026-07-19T10:24:20.913Z"
 }

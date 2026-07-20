@@ -21,6 +21,7 @@ const FRONTEND_DIR = path.join(__dirname, "../frontend");
 const FRONTEND_ASSET_DIR = path.join(FRONTEND_DIR, "assets");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 const SERVICE_IMAGE_DIR = path.join(UPLOADS_DIR, "service-images");
+const CLIENT_LOGO_DIR = path.join(UPLOADS_DIR, "client-logos");
 const MAX_FILES_PER_JOB = 10;
 const CUSTOMER_UPLOAD_EXTENSIONS = new Set(["PDF", "JPG", "JPEG", "PNG"]);
 const KIOSK_PRINTER_STALE_MS = 10 * 60 * 1000;
@@ -245,6 +246,74 @@ function slug(value, fallback = "service") {
   return normalized || fallback;
 }
 
+function normalizeKioskCode(value, maxLength = 32) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLength);
+}
+
+function kioskIdInUse(kioskId = "", ignoreKioskId = "") {
+  const normalized = normalizeKioskCode(kioskId);
+  const ignored = normalizeKioskCode(ignoreKioskId);
+  if (!normalized) return false;
+  return (db?.kiosks || []).some((kiosk) => {
+    const existingId = normalizeKioskCode(kiosk.kioskId);
+    return existingId === normalized && existingId !== ignored;
+  });
+}
+
+function setupCodeInUse(setupCode = "", ignoreKioskId = "") {
+  const normalized = normalizeKioskCode(setupCode);
+  const ignored = normalizeKioskCode(ignoreKioskId);
+  if (!normalized) return false;
+  return (db?.kiosks || []).some((kiosk) => {
+    const existingId = normalizeKioskCode(kiosk.kioskId);
+    return existingId !== ignored && normalizeKioskCode(kiosk.setupCode) === normalized;
+  });
+}
+
+function nextUniqueKioskId(seed = "") {
+  const preferred = normalizeKioskCode(seed);
+  if (preferred && !kioskIdInUse(preferred)) return preferred;
+
+  const used = new Set((db?.kiosks || []).map((kiosk) => normalizeKioskCode(kiosk.kioskId)).filter(Boolean));
+  const numbers = [...used]
+    .map((id) => /^KIOSK-(\d+)$/i.exec(id)?.[1])
+    .filter(Boolean)
+    .map((value) => Number(value))
+    .filter(Number.isFinite);
+  let nextNumber = numbers.length ? Math.max(...numbers) + 1 : used.size + 1;
+
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    const candidate = `KIOSK-${String(nextNumber + attempt).padStart(2, "0")}`;
+    if (!used.has(candidate)) return candidate;
+  }
+
+  return `KIOSK-${Date.now().toString().slice(-8)}`;
+}
+
+function generateKioskSetupCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.randomBytes(8);
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+}
+
+function uniqueKioskSetupCode(seed = "", ignoreKioskId = "") {
+  const preferred = normalizeKioskCode(seed, 16);
+  if (preferred && !setupCodeInUse(preferred, ignoreKioskId)) return preferred;
+
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const candidate = generateKioskSetupCode();
+    if (!setupCodeInUse(candidate, ignoreKioskId)) return candidate;
+  }
+
+  return crypto.randomBytes(6).toString("hex").toUpperCase();
+}
+
 function normalizeFields(fields) {
   if (Array.isArray(fields)) {
     return fields.map((field) => String(field || "").trim()).filter(Boolean).slice(0, 8);
@@ -379,6 +448,13 @@ function normalizeServices(services) {
     });
 }
 
+function normalizePricingPair(rates, fallback = { bw: 0, color: 0 }) {
+  return {
+    bw: numericPrice(rates?.bw, fallback.bw),
+    color: numericPrice(rates?.color, fallback.color)
+  };
+}
+
 function normalizePricing(pricing, services = DEFAULT_SERVICES) {
   const nextPricing = Object.fromEntries(
     normalizeServices(services).map((service) => [
@@ -420,6 +496,31 @@ function normalizePricing(pricing, services = DEFAULT_SERVICES) {
     };
   });
 
+  const kioskPricingSource = pricing.__kiosks || pricing.kiosks || pricing.byKiosk || {};
+  const nextKioskPricing = {};
+
+  if (kioskPricingSource && typeof kioskPricingSource === "object") {
+    Object.entries(kioskPricingSource).forEach(([rawKioskId, kioskPricing]) => {
+      const kioskId = normalizeKioskCode(rawKioskId);
+      if (!kioskId || !kioskPricing || typeof kioskPricing !== "object") return;
+
+      const scopedPricing = {};
+      Object.keys(nextPricing).forEach((serviceId) => {
+        const rates = kioskPricing[serviceId];
+        if (!rates || typeof rates !== "object") return;
+        scopedPricing[serviceId] = normalizePricingPair(rates, nextPricing[serviceId]);
+      });
+
+      if (Object.keys(scopedPricing).length) {
+        nextKioskPricing[kioskId] = scopedPricing;
+      }
+    });
+  }
+
+  if (Object.keys(nextKioskPricing).length) {
+    nextPricing.__kiosks = nextKioskPricing;
+  }
+
   return nextPricing;
 }
 
@@ -434,6 +535,9 @@ function defaultKioskAdmin() {
     email: ADMIN_CREDENTIALS.email,
     password: ADMIN_CREDENTIALS.password,
     status: "active",
+    logoUrl: normalizePublicAssetUrl(process.env.CLIENT_LOGO_URL || process.env.KIOSK_CLIENT_LOGO_URL || ""),
+    kioskTitle: String(process.env.CLIENT_KIOSK_TITLE || process.env.KIOSK_CLIENT_TITLE || "").trim(),
+    kioskSubtitle: String(process.env.CLIENT_KIOSK_SUBTITLE || process.env.KIOSK_CLIENT_SUBTITLE || "").trim(),
     projectIds: ["default-project"],
     kioskIds: []
   };
@@ -453,11 +557,14 @@ function normalizeKioskAdmin(record = {}, existing = {}) {
     email: String(next.email || "").trim().toLowerCase(),
     password: String(password || "").trim(),
     status: String(next.status || "active").trim().toLowerCase() === "disabled" ? "disabled" : "active",
+    logoUrl: normalizePublicAssetUrl(next.logoUrl || next.logo || next.clientLogoUrl || ""),
+    kioskTitle: String(next.kioskTitle || next.headingTitle || "").trim().slice(0, 120),
+    kioskSubtitle: String(next.kioskSubtitle || next.headingDescription || next.description || "").trim().slice(0, 180),
     projectIds: Array.isArray(next.projectIds)
       ? next.projectIds.map((item) => slug(item, "")).filter(Boolean)
       : String(next.projectIds || "").split(",").map((item) => slug(item, "")).filter(Boolean),
     kioskIds: Array.isArray(next.kioskIds)
-      ? next.kioskIds.map((item) => String(item || "").trim().toUpperCase()).filter(Boolean)
+      ? next.kioskIds.map((item) => normalizeKioskCode(item)).filter(Boolean)
       : []
   };
 }
@@ -542,10 +649,10 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
   const services = persistedServices.map((service) => {
     if (service.projectIds.length) return { ...service, kioskIds: [] };
 
-    const legacyKioskIds = new Set(service.kioskIds.map((kioskId) => String(kioskId || "").toUpperCase()));
+    const legacyKioskIds = new Set(service.kioskIds.map((kioskId) => normalizeKioskCode(kioskId)));
     const legacyProjects = legacyKioskIds.size
       ? kioskProjects.filter((projectId) => kiosks.some((kiosk) => (
-          projectId === kiosk.projectId && legacyKioskIds.has(String(kiosk.kioskId || "").toUpperCase())
+          projectId === kiosk.projectId && legacyKioskIds.has(normalizeKioskCode(kiosk.kioskId))
         )))
       : kioskProjects;
 
@@ -665,34 +772,63 @@ function saveData() {
   writeJsonAtomic(DATA_PATH, dataSnapshot());
 }
 
-function serviceRates(serviceId) {
-  return db.pricing[serviceId] || db.services.find((service) => service.id === serviceId)?.pricing || DEFAULT_PRICING.print;
+function serviceRates(serviceId, kioskId = "") {
+  const service = db.services.find((item) => item.id === serviceId);
+  const baseRates = normalizePricingPair(db.pricing[serviceId] || service?.pricing || DEFAULT_PRICING.print, DEFAULT_PRICING.print);
+  const scopedKioskId = normalizeKioskCode(kioskId);
+  const kioskRates = scopedKioskId ? db.pricing.__kiosks?.[scopedKioskId]?.[serviceId] : null;
+  return kioskRates ? normalizePricingPair(kioskRates, baseRates) : baseRates;
 }
 
 function kioskForConfig(kioskId = "") {
-  const id = String(kioskId || "").trim().toUpperCase();
-  return db.kiosks.find((kiosk) => String(kiosk.kioskId || "").toUpperCase() === id) || null;
+  const id = normalizeKioskCode(kioskId);
+  return db.kiosks.find((kiosk) => normalizeKioskCode(kiosk.kioskId) === id) || null;
+}
+
+function projectForKiosk(kiosk = {}) {
+  const projectId = slug(kiosk?.projectId || "", "");
+  return db.projects.find((project) => project.projectId === projectId) || null;
+}
+
+function clientForProject(project = null) {
+  if (!project) return null;
+
+  return db.kioskAdmins.find((admin) => (
+    admin.adminId === project.adminId ||
+    (Array.isArray(admin.projectIds) && admin.projectIds.includes(project.projectId))
+  )) || null;
+}
+
+function clientForKiosk(kiosk = null) {
+  if (!kiosk) return null;
+  const directAdminId = normalizeAdminId(kiosk.adminId || "", "");
+  if (directAdminId) {
+    const directAdmin = db.kioskAdmins.find((admin) => admin.adminId === directAdminId);
+    if (directAdmin) return directAdmin;
+  }
+
+  return clientForProject(projectForKiosk(kiosk));
 }
 
 function serviceAppliesToKiosk(service = {}, kiosk = null, kioskId = "") {
-  const id = String(kioskId || kiosk?.kioskId || "").trim().toUpperCase();
+  const id = normalizeKioskCode(kioskId || kiosk?.kioskId);
   const projectId = slug(kiosk?.projectId || "", "");
   const projectIds = Array.isArray(service.projectIds) ? service.projectIds.map((item) => slug(item, "")).filter(Boolean) : [];
-  const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((item) => String(item || "").toUpperCase()).filter(Boolean) : [];
-
-  if (projectIds.length) {
-    return Boolean(projectId && projectIds.includes(projectId));
-  }
+  const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((item) => normalizeKioskCode(item)).filter(Boolean) : [];
 
   if (kioskIds.length) {
     return Boolean(id && kioskIds.includes(id));
+  }
+
+  if (projectIds.length) {
+    return Boolean(projectId && projectIds.includes(projectId));
   }
 
   return true;
 }
 
 function servicesForKiosk(kioskId = "") {
-  const id = String(kioskId || "").trim().toUpperCase();
+  const id = normalizeKioskCode(kioskId);
   const kiosk = kioskForConfig(id);
   return db.services.filter((service) => !id || serviceAppliesToKiosk(service, kiosk, id));
 }
@@ -801,7 +937,7 @@ function publicProjectIdsForScope(scope = {}) {
 }
 
 function servicesForPublicScope(scope = {}) {
-  const kioskId = String(scope.kioskId || "").trim().toUpperCase();
+  const kioskId = normalizeKioskCode(scope.kioskId);
   const hasExplicitScope = Boolean(kioskId || scope.projectId || scope.adminId || scope.adminEmail);
   const hasRequestedAdmin = Boolean(scope.adminId || scope.adminEmail);
   const hasRequestedProject = Boolean(scope.projectId);
@@ -818,7 +954,7 @@ function servicesForPublicScope(scope = {}) {
         ? service.projectIds.map((projectId) => slug(projectId, "")).filter(Boolean)
         : [];
       const serviceKioskIds = Array.isArray(service.kioskIds)
-        ? service.kioskIds.map((id) => String(id || "").trim().toUpperCase()).filter(Boolean)
+        ? service.kioskIds.map((id) => normalizeKioskCode(id)).filter(Boolean)
         : [];
 
       if (serviceProjectIds.length) {
@@ -867,12 +1003,8 @@ function normalizeKioskCustomerSettings(settings = {}, existing = {}) {
 function kioskConfigResponse(kioskId = "") {
   const filteredServices = servicesForKiosk(kioskId);
   const kiosk = kioskForConfig(kioskId);
-  const pricing = Object.fromEntries(
-    filteredServices.map((service) => [
-      service.id,
-      db.pricing[service.id] || service.pricing || { bw: 0, color: 0 }
-    ])
-  );
+  const clientBrand = publicKioskClientBrand(clientForKiosk(kiosk));
+  const pricing = pricingForServices(filteredServices, kioskId ? [kioskId] : []);
 
   return {
     kioskId: kioskId || null,
@@ -886,12 +1018,14 @@ function kioskConfigResponse(kioskId = "") {
       scanner: kiosk.scanner,
       appVersion: kiosk.appVersion,
       lastOnline: kiosk.lastOnline,
-      customerSettings: normalizeKioskCustomerSettings(kiosk.customerSettings)
+      customerSettings: normalizeKioskCustomerSettings(kiosk.customerSettings),
+      clientBrand
     } : null,
+    clientBrand,
     config: db.config,
     services: filteredServices.map((service) => ({
       ...service,
-      pricing: pricing[service.id] || service.pricing
+      pricing: serviceRates(service.id, kioskId)
     })),
     pricing
   };
@@ -913,18 +1047,24 @@ function publicServicesResponse(scope = {}) {
   const requestScope = typeof scope === "string" ? { kioskId: scope } : scope;
   const filteredServices = servicesForPublicScope(requestScope);
   const enabledServices = filteredServices.filter((service) => service.enabled !== false);
-  const pricing = Object.fromEntries(
-    enabledServices.map((service) => [
-      service.id,
-      db.pricing[service.id] || service.pricing || { bw: 0, color: 0 }
-    ])
+  const kiosk = kioskForConfig(requestScope.kioskId);
+  const requestedAdmin = findKioskAdminByPublicIdentifier(requestScope.adminId || requestScope.adminEmail || "");
+  const requestedProject = requestScope.projectId
+    ? db.projects.find((project) => project.projectId === slug(requestScope.projectId, "")) || null
+    : null;
+  const clientBrand = publicKioskClientBrand(
+    clientForKiosk(kiosk) ||
+    requestedAdmin ||
+    clientForProject(requestedProject)
   );
+  const pricing = pricingForServices(enabledServices, requestScope.kioskId ? [requestScope.kioskId] : []);
 
   return {
     config: db.config,
+    clientBrand,
     services: enabledServices.map((service) => publicServiceRecord({
       ...service,
-      pricing: pricing[service.id] || service.pricing
+      pricing: serviceRates(service.id, requestScope.kioskId)
     })),
     pricing
   };
@@ -1033,6 +1173,7 @@ function serveFrontendAsset(res, requestPathname) {
 
 function ensureUploadDirs() {
   fs.mkdirSync(SERVICE_IMAGE_DIR, { recursive: true });
+  fs.mkdirSync(CLIENT_LOGO_DIR, { recursive: true });
 }
 
 function publicOrigin(req) {
@@ -1078,17 +1219,189 @@ function imageContentType(filename) {
   }[extension] || "application/octet-stream";
 }
 
-function safeUploadedImageName(filename) {
+function safeUploadedAssetName(filename, fallbackBase = "asset", allowedExtensions = [".gif", ".jpg", ".jpeg", ".png", ".webp"]) {
   const extension = path.extname(filename).toLowerCase();
-  const allowed = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
-  const normalizedExtension = allowed.has(extension) ? extension : ".png";
+  const allowed = new Set(allowedExtensions);
+  const normalizedExtension = allowed.has(extension) ? extension : allowedExtensions[0] || ".bin";
   const base = path.basename(filename, extension)
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 36) || "service-image";
+    .slice(0, 36) || fallbackBase;
 
   return `${Date.now()}-${crypto.randomBytes(3).toString("hex")}-${base}${normalizedExtension}`;
+}
+
+function safeUploadedImageName(filename) {
+  return safeUploadedAssetName(filename, "service-image", [".gif", ".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
+}
+
+function safeUploadedClientLogoName(filename) {
+  return safeUploadedAssetName(filename, "client-logo", [".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+}
+
+function normalizePublicAssetUrl(value = "") {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url.slice(0, 2048);
+  if (url.startsWith("/uploads/") || url.startsWith("./assets/") || url.startsWith("/assets/")) return url.slice(0, 2048);
+  return "";
+}
+
+function s3UploadConfig() {
+  const bucket = firstEnvValue(["AWS_S3_BUCKET", "S3_BUCKET", "AWS_BUCKET_NAME"]);
+  const region = firstEnvValue(["AWS_REGION", "AWS_DEFAULT_REGION", "S3_REGION"]) || "ap-south-1";
+  const accessKeyId = firstEnvValue(["AWS_ACCESS_KEY_ID", "S3_ACCESS_KEY_ID"]);
+  const secretAccessKey = firstEnvValue(["AWS_SECRET_ACCESS_KEY", "S3_SECRET_ACCESS_KEY"]);
+  const sessionToken = firstEnvValue(["AWS_SESSION_TOKEN", "S3_SESSION_TOKEN"]);
+  const publicBaseUrl = firstEnvValue(["S3_PUBLIC_BASE_URL", "AWS_S3_PUBLIC_BASE_URL", "CLOUDFRONT_URL", "AWS_CLOUDFRONT_URL"]).replace(/\/+$/, "");
+  const prefix = firstEnvValue(["S3_UPLOAD_PREFIX", "AWS_S3_PREFIX", "S3_PREFIX"]).replace(/^\/+|\/+$/g, "");
+  const requested = Boolean(bucket || accessKeyId || secretAccessKey || sessionToken);
+
+  return {
+    enabled: Boolean(bucket && region && accessKeyId && secretAccessKey),
+    requested,
+    bucket,
+    region,
+    accessKeyId,
+    secretAccessKey,
+    sessionToken,
+    publicBaseUrl,
+    prefix,
+    host: bucket ? `${bucket}.s3.${region}.amazonaws.com` : ""
+  };
+}
+
+function hashHex(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function hmac(key, value, encoding) {
+  return crypto.createHmac("sha256", key).update(value).digest(encoding);
+}
+
+function s3CanonicalUri(key) {
+  return `/${String(key || "").split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+}
+
+function s3ObjectKey(folder, filename) {
+  const prefix = s3UploadConfig().prefix;
+  return [prefix, folder, filename]
+    .filter(Boolean)
+    .join("/")
+    .replace(/\/+/g, "/");
+}
+
+function s3PublicUrl(config, key) {
+  const encodedKey = String(key || "").split("/").map((part) => encodeURIComponent(part)).join("/");
+  if (config.publicBaseUrl) return `${config.publicBaseUrl}/${encodedKey}`;
+  return `https://${config.host}/${encodedKey}`;
+}
+
+function s3SigningKey(secretAccessKey, dateStamp, region) {
+  const dateKey = hmac(`AWS4${secretAccessKey}`, dateStamp);
+  const regionKey = hmac(dateKey, region);
+  const serviceKey = hmac(regionKey, "s3");
+  return hmac(serviceKey, "aws4_request");
+}
+
+function putS3Object(config, key, content, contentType) {
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = hashHex(content);
+  const canonicalUri = s3CanonicalUri(key);
+  const credentialScope = `${dateStamp}/${config.region}/s3/aws4_request`;
+  const headers = {
+    "content-type": contentType || "application/octet-stream",
+    host: config.host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate
+  };
+
+  if (config.sessionToken) {
+    headers["x-amz-security-token"] = config.sessionToken;
+  }
+
+  const sortedHeaderKeys = Object.keys(headers).sort();
+  const canonicalHeaders = sortedHeaderKeys.map((name) => `${name}:${headers[name]}\n`).join("");
+  const signedHeaders = sortedHeaderKeys.join(";");
+  const canonicalRequest = [
+    "PUT",
+    canonicalUri,
+    "",
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash
+  ].join("\n");
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    hashHex(canonicalRequest)
+  ].join("\n");
+  const signature = hmac(s3SigningKey(config.secretAccessKey, dateStamp, config.region), stringToSign, "hex");
+  const requestHeaders = {
+    ...headers,
+    Authorization: `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+    "Content-Length": content.length
+  };
+
+  return new Promise((resolve, reject) => {
+    const request = https.request({
+      method: "PUT",
+      hostname: config.host,
+      path: canonicalUri,
+      headers: requestHeaders
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          resolve();
+          return;
+        }
+
+        const message = Buffer.concat(chunks).toString("utf8").slice(0, 240);
+        reject(new Error(`S3 upload failed (${response.statusCode || "unknown"}). ${message}`.trim()));
+      });
+    });
+
+    request.on("error", reject);
+    request.write(content);
+    request.end();
+  });
+}
+
+async function storeClientLogoUpload(req, file) {
+  const filename = safeUploadedClientLogoName(file.filename);
+  const contentType = file.mimeType && file.mimeType.startsWith("image/") ? file.mimeType : imageContentType(filename);
+  const config = s3UploadConfig();
+
+  if (config.enabled) {
+    const key = s3ObjectKey("client-logos", filename);
+    await putS3Object(config, key, file.content, contentType);
+    return {
+      imageUrl: s3PublicUrl(config, key),
+      filename,
+      storage: "s3",
+      size: file.content.length
+    };
+  }
+
+  if (config.requested) {
+    throw new Error("S3 logo upload is not fully configured. Set AWS_S3_BUCKET, AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY.");
+  }
+
+  ensureUploadDirs();
+  fs.writeFileSync(path.join(CLIENT_LOGO_DIR, filename), file.content);
+
+  return {
+    imageUrl: `${publicOrigin(req)}/uploads/client-logos/${encodeURIComponent(filename)}`,
+    filename,
+    storage: "local",
+    size: file.content.length
+  };
 }
 
 function credentialIdentifier(body = {}) {
@@ -1108,8 +1421,28 @@ function publicKioskAdmin(admin = {}) {
     name: admin.name,
     email: admin.email,
     status: admin.status,
+    logoUrl: normalizePublicAssetUrl(admin.logoUrl || ""),
+    kioskTitle: String(admin.kioskTitle || "").trim(),
+    kioskSubtitle: String(admin.kioskSubtitle || "").trim(),
     projectIds: Array.isArray(admin.projectIds) ? admin.projectIds : [],
     kioskIds: Array.isArray(admin.kioskIds) ? admin.kioskIds : []
+  };
+}
+
+function publicKioskClientBrand(admin = {}) {
+  if (!admin) return null;
+  const logoUrl = normalizePublicAssetUrl(admin.logoUrl || "");
+  const title = String(admin.kioskTitle || "").trim();
+  const subtitle = String(admin.kioskSubtitle || "").trim();
+
+  if (!logoUrl && !title && !subtitle) return null;
+
+  return {
+    clientId: admin.adminId || "",
+    name: admin.name || "",
+    title: title || String(admin.name || "").trim(),
+    subtitle,
+    logoUrl
   };
 }
 
@@ -1185,7 +1518,7 @@ function authenticatedAdminResponse(body = {}) {
 }
 
 function kioskAdminUnlockResponse(body = {}) {
-  const kioskId = String(body.kioskId || "").trim().toUpperCase();
+  const kioskId = normalizeKioskCode(body.kioskId);
   const kiosk = kioskId ? kioskForConfig(kioskId) : null;
   const kioskAdmin = findKioskAdminByCredentials(body);
   const superAdminMatches = credentialsMatch(body, SUPER_ADMIN_CREDENTIALS);
@@ -1330,16 +1663,24 @@ function projectIdsWithKiosksForAdmin(session = {}) {
 
 function kioskIdsForAdmin(session = {}) {
   if (session.role === "super-admin") {
-    return new Set(db.kiosks.map((kiosk) => String(kiosk.kioskId || "").toUpperCase()));
+    return new Set(db.kiosks.map((kiosk) => normalizeKioskCode(kiosk.kioskId)).filter(Boolean));
   }
 
   const account = findKioskAdminById(session.adminId);
   if (!account || account.status === "disabled") return new Set();
 
   const assignedProjectIds = projectIdsForAdmin(session);
+  const explicitKioskIds = new Set(
+    (Array.isArray(account.kioskIds) ? account.kioskIds : [])
+      .map((kioskId) => normalizeKioskCode(kioskId))
+      .filter(Boolean)
+  );
+  if (explicitKioskIds.size) return explicitKioskIds;
+
   const projectKiosks = db.kiosks
     .filter((kiosk) => assignedProjectIds.has(slug(kiosk.projectId, "")))
-    .map((kiosk) => String(kiosk.kioskId || "").toUpperCase());
+    .map((kiosk) => normalizeKioskCode(kiosk.kioskId))
+    .filter(Boolean);
 
   return new Set(projectKiosks);
 }
@@ -1355,16 +1696,16 @@ function adminCanAccessProject(session = {}, projectId = "") {
 
 function kiosksForAdmin(session = {}) {
   const allowed = kioskIdsForAdmin(session);
-  return db.kiosks.filter((kiosk) => allowed.has(String(kiosk.kioskId || "").toUpperCase()));
+  return db.kiosks.filter((kiosk) => allowed.has(normalizeKioskCode(kiosk.kioskId)));
 }
 
 function adminCanAccessKiosk(session = {}, kioskId = "") {
-  return kioskIdsForAdmin(session).has(String(kioskId || "").toUpperCase());
+  return kioskIdsForAdmin(session).has(normalizeKioskCode(kioskId));
 }
 
 function jobsForAdmin(session = {}) {
   const allowed = kioskIdsForAdmin(session);
-  return db.jobs.filter((job) => allowed.has(String(job.kioskId || "").toUpperCase()));
+  return db.jobs.filter((job) => allowed.has(normalizeKioskCode(job.kioskId)));
 }
 
 function paymentsForJobs(jobs = []) {
@@ -1381,17 +1722,17 @@ function refundsForJobs(jobs = [], payments = []) {
 function servicesForAdmin(session = {}, kioskId = "") {
   const allowed = kioskIdsForAdmin(session);
   const allowedProjects = projectIdsForAdmin(session);
-  const requestedKioskId = String(kioskId || "").trim().toUpperCase();
+  const requestedKioskId = normalizeKioskCode(kioskId);
 
   if (requestedKioskId) {
     if (!allowed.has(requestedKioskId)) return [];
-    const kiosk = db.kiosks.find((item) => String(item.kioskId || "").toUpperCase() === requestedKioskId) || null;
+    const kiosk = db.kiosks.find((item) => normalizeKioskCode(item.kioskId) === requestedKioskId) || null;
     return db.services.filter((service) => serviceAppliesToKiosk(service, kiosk, requestedKioskId));
   }
 
   return db.services.filter((service) => {
     const projectIds = Array.isArray(service.projectIds) ? service.projectIds.map((item) => slug(item, "")).filter(Boolean) : [];
-    const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((id) => String(id || "").toUpperCase()).filter(Boolean) : [];
+    const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((id) => normalizeKioskCode(id)).filter(Boolean) : [];
 
     if (projectIds.length) return projectIds.some((id) => allowedProjects.has(id));
     if (kioskIds.length) return kioskIds.some((id) => allowed.has(id));
@@ -1399,11 +1740,42 @@ function servicesForAdmin(session = {}, kioskId = "") {
   });
 }
 
-function pricingForServices(serviceList = []) {
-  return Object.fromEntries(serviceList.map((service) => [
+function pricingForServices(serviceList = [], kioskIds = null) {
+  const pricing = Object.fromEntries(serviceList.map((service) => [
     service.id,
-    db.pricing[service.id] || service.pricing
+    normalizePricingPair(db.pricing[service.id] || service.pricing || DEFAULT_PRICING.print, DEFAULT_PRICING.print)
   ]));
+  const requestedKioskIds = Array.isArray(kioskIds)
+    ? kioskIds.map((id) => normalizeKioskCode(id)).filter(Boolean)
+    : [];
+  if (!requestedKioskIds.length) {
+    return pricing;
+  }
+
+  const serviceIds = new Set(serviceList.map((service) => service.id));
+  const allowedKioskIds = new Set(requestedKioskIds);
+  const scopedKioskPricing = {};
+
+  Object.entries(db.pricing.__kiosks || {}).forEach(([rawKioskId, kioskPricing]) => {
+    const kioskId = normalizeKioskCode(rawKioskId);
+    if (!kioskId || (allowedKioskIds.size && !allowedKioskIds.has(kioskId))) return;
+
+    const scopedPricing = {};
+    Object.entries(kioskPricing || {}).forEach(([serviceId, rates]) => {
+      if (!serviceIds.has(serviceId)) return;
+      scopedPricing[serviceId] = normalizePricingPair(rates, pricing[serviceId]);
+    });
+
+    if (Object.keys(scopedPricing).length) {
+      scopedKioskPricing[kioskId] = scopedPricing;
+    }
+  });
+
+  if (Object.keys(scopedKioskPricing).length) {
+    pricing.__kiosks = scopedKioskPricing;
+  }
+
+  return pricing;
 }
 
 function mergeAdminServices(session = {}, incomingServices = [], incomingPricing = null) {
@@ -1423,7 +1795,7 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
         : (Array.isArray(existing.projectIds) && existing.projectIds.length
           ? existing.projectIds.filter((id) => allowedProjectIds.has(id))
           : [...allowedProjectIds]);
-      const requestedIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((id) => String(id || "").toUpperCase()) : [];
+      const requestedIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((id) => normalizeKioskCode(id)) : [];
       const scopedIds = requestedIds.length
         ? requestedIds.filter((id) => allowedKioskIds.has(id))
         : [];
@@ -1438,7 +1810,7 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
       if (service.projectIds?.length) return service.projectIds.some((id) => allowedProjectIds.has(slug(id, "")));
       if (!allowedExistingIds.has(service.id)) return true;
       if (!service.kioskIds.length) return true;
-      return service.kioskIds.some((id) => allowedKioskIds.has(String(id || "").toUpperCase()));
+      return service.kioskIds.some((id) => allowedKioskIds.has(normalizeKioskCode(id)));
     });
 
   const incomingIds = new Set(normalizedIncoming.map((service) => service.id));
@@ -1474,6 +1846,13 @@ function isAllowedServiceImage(file) {
   const extension = path.extname(file.filename).toLowerCase();
   const allowedExtensions = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
   return file.mimeType.startsWith("image/") || file.mimeType === "application/pdf" || allowedExtensions.has(extension);
+}
+
+function isAllowedClientLogo(file) {
+  if (!file?.content?.length || !file.filename) return false;
+  const extension = path.extname(file.filename).toLowerCase();
+  const allowedExtensions = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp"]);
+  return file.mimeType.startsWith("image/") || allowedExtensions.has(extension);
 }
 
 function readBody(req) {
@@ -2279,17 +2658,76 @@ function renderMobileUploadPage(session) {
   });
 }
 
+function normalizeJobPrintOptions(body = {}, existingJob = {}) {
+  const source = { ...(existingJob && typeof existingJob === "object" ? existingJob : {}), ...(body && typeof body === "object" ? body : {}) };
+
+  return {
+    kioskId: normalizeKioskCode(source.kioskId || defaultKioskId()),
+    copies: Math.max(1, Number(source.copies || 1)),
+    colorMode: String(source.colorMode || "").toLowerCase() === "color" ? "color" : "bw",
+    paperSize: String(source.paperSize || "A4").trim() || "A4",
+    sides: String(source.sides || "").toLowerCase() === "duplex" ? "duplex" : "single",
+    orientation: String(source.orientation || "").toLowerCase() === "landscape" ? "landscape" : "portrait",
+    pageRange: String(source.pageRange || source.range || "all").trim() || "all"
+  };
+}
+
+function validateCustomerJobOptions(body = {}, existingJob = null) {
+  const options = normalizeJobPrintOptions(body, existingJob || {});
+  const kioskSettings = normalizeKioskCustomerSettings(kioskForConfig(options.kioskId)?.customerSettings);
+  const serviceId = String(body.service || existingJob?.service || "").trim();
+  const service = db.services.find((item) => item.id === serviceId) || null;
+  const serviceSettings = normalizeServiceCustomerSettings(service?.customerSettings);
+  const settings = {
+    ...kioskSettings,
+    bw: kioskSettings.bw && serviceSettings.bw,
+    color: kioskSettings.color && serviceSettings.color,
+    copies: kioskSettings.copies && serviceSettings.copies
+  };
+
+  if (options.colorMode === "color" && !settings.color) {
+    return "Color printing is disabled by Super Admin for this kiosk.";
+  }
+
+  if (options.colorMode === "bw" && !settings.bw) {
+    return "B/W printing is disabled by Super Admin for this kiosk.";
+  }
+
+  if (options.copies > 1 && !settings.copies) {
+    return "Multiple copies are disabled by Super Admin for this kiosk.";
+  }
+
+  if (options.sides === "duplex" && !settings.sides) {
+    return "Both-side printing is disabled by Super Admin for this kiosk.";
+  }
+
+  if (options.orientation === "landscape" && !settings.orientation) {
+    return "Landscape orientation is disabled by Super Admin for this kiosk.";
+  }
+
+  if (options.pageRange.toLowerCase() !== "all" && !settings.pageRange) {
+    return "Page range selection is disabled by Super Admin for this kiosk.";
+  }
+
+  return "";
+}
+
 function createJob(body) {
+  const printOptions = normalizeJobPrintOptions(body);
   const job = {
     jobId: body.jobId || `JOB-${Date.now()}`,
-    kioskId: body.kioskId || defaultKioskId(),
+    kioskId: printOptions.kioskId,
     service: body.service || "print",
     fileName: body.fileName || "pending-upload.pdf",
     fileType: body.fileType || "PDF",
+    templateId: body.templateId || "",
     pageCount: Number(body.pageCount || 1),
-    copies: Number(body.copies || 1),
-    colorMode: body.colorMode || "bw",
-    paperSize: body.paperSize || "A4",
+    copies: printOptions.copies,
+    colorMode: printOptions.colorMode,
+    paperSize: printOptions.paperSize,
+    sides: printOptions.sides,
+    orientation: printOptions.orientation,
+    pageRange: printOptions.pageRange,
     amount: 0,
     paymentStatus: "Draft",
     printStatus: "Draft",
@@ -2305,7 +2743,7 @@ function createJob(body) {
 function calculatePrice(job) {
   const pages = Math.max(1, Number(job.pageCount) || 1);
   const copies = Math.max(1, Number(job.copies) || 1);
-  const rates = serviceRates(job.service);
+  const rates = serviceRates(job.service, job.kioskId);
   const rate = job.colorMode === "color" ? rates.color : rates.bw;
   const amount = pages * copies * rate;
   job.amount = amount;
@@ -2321,15 +2759,21 @@ function findJob(jobId) {
 
 function upsertPaymentJob(body) {
   const job = findJob(body.jobId) || createJob(body);
+  const printOptions = normalizeJobPrintOptions(body, job);
 
   Object.assign(job, {
+    kioskId: printOptions.kioskId,
     service: body.service || job.service,
     fileName: body.fileName || job.fileName,
     fileType: body.fileType || job.fileType,
+    templateId: body.templateId || job.templateId || "",
     pageCount: Number(body.pageCount || job.pageCount || 1),
-    copies: Number(body.copies || job.copies || 1),
-    colorMode: body.colorMode || job.colorMode,
-    paperSize: body.paperSize || job.paperSize,
+    copies: printOptions.copies,
+    colorMode: printOptions.colorMode,
+    paperSize: printOptions.paperSize,
+    sides: printOptions.sides,
+    orientation: printOptions.orientation,
+    pageRange: printOptions.pageRange,
     printStatus: "Price Calculated"
   });
 
@@ -2366,10 +2810,10 @@ function normalizeActivationDeviceId(value = "") {
 }
 
 function validateKioskActivationRequest(body = {}) {
-  const kioskId = String(body.kioskId || "").trim().toUpperCase();
-  const setupCode = String(body.setupCode || "").trim().toUpperCase();
+  const kioskId = normalizeKioskCode(body.kioskId);
+  const setupCode = normalizeKioskCode(body.setupCode, 16);
   const activationDeviceId = normalizeActivationDeviceId(body.deviceId || body.activationDeviceId || body.machineId || "");
-  const kiosk = db.kiosks.find((item) => String(item.kioskId || "").toUpperCase() === kioskId);
+  const kiosk = db.kiosks.find((item) => normalizeKioskCode(item.kioskId) === kioskId);
 
   if (!kioskId || !setupCode || !activationDeviceId) {
     return {
@@ -2378,7 +2822,7 @@ function validateKioskActivationRequest(body = {}) {
     };
   }
 
-  if (!kiosk || String(kiosk.setupCode || "").toUpperCase() !== setupCode) {
+  if (!kiosk || normalizeKioskCode(kiosk.setupCode, 16) !== setupCode) {
     return {
       status: 403,
       error: "Invalid kiosk ID or setup code."
@@ -2479,9 +2923,9 @@ function validateReleaseRecord(release) {
 }
 
 function validateKioskDevice(input = {}) {
-  const kioskId = String(input.kioskId || "").trim().toUpperCase();
+  const kioskId = normalizeKioskCode(input.kioskId);
   const deviceId = normalizeActivationDeviceId(input.deviceId || "");
-  const kiosk = db.kiosks.find((item) => String(item.kioskId || "").toUpperCase() === kioskId);
+  const kiosk = db.kiosks.find((item) => normalizeKioskCode(item.kioskId) === kioskId);
 
   if (!kioskId || !deviceId) return { status: 400, error: "Kiosk ID and device identity are required." };
   if (!kiosk || !kiosk.activatedAt) return { status: 403, error: "This kiosk has not been activated." };
@@ -2553,7 +2997,7 @@ function normalizeSuperAdminJob(record = {}, existing = {}) {
   return {
     ...next,
     jobId: String(existing.jobId || next.jobId || `JOB-${Date.now()}`).trim(),
-    kioskId: String(next.kioskId || defaultKioskId()).trim(),
+    kioskId: normalizeKioskCode(next.kioskId || defaultKioskId()) || defaultKioskId(),
     service: String(next.service || "print").trim(),
     fileName: String(next.fileName || "admin-created-job.pdf").trim(),
     fileType: String(next.fileType || "PDF").trim().toUpperCase(),
@@ -2589,8 +3033,8 @@ function normalizeSuperAdminPayment(record = {}, existing = {}) {
 
 function normalizeSuperAdminKiosk(record = {}, existing = {}) {
   const next = { ...existing, ...record };
-  const kioskId = String(existing.kioskId || next.kioskId || `KIOSK-${Date.now()}`).trim().toUpperCase();
-  const setupCode = String(next.setupCode || existing.setupCode || crypto.randomBytes(4).toString("hex").toUpperCase()).trim().toUpperCase();
+  const kioskId = normalizeKioskCode(existing.kioskId || next.kioskId) || nextUniqueKioskId();
+  const setupCode = normalizeKioskCode(next.setupCode || existing.setupCode, 16) || uniqueKioskSetupCode("", kioskId);
   const customerSettings = normalizeKioskCustomerSettings(next.customerSettings, existing.customerSettings);
 
   return {
@@ -2787,7 +3231,8 @@ function buildSuperAdminHierarchy() {
       admin.adminId === project?.adminId ||
       (admin.projectIds || []).includes(kiosk.projectId)
     )) || null;
-    const kioskJobs = db.jobs.filter((job) => job.kioskId === kiosk.kioskId);
+    const kioskCode = normalizeKioskCode(kiosk.kioskId);
+    const kioskJobs = db.jobs.filter((job) => normalizeKioskCode(job.kioskId) === kioskCode);
     const jobIds = new Set(kioskJobs.map((job) => job.jobId));
     const serviceIds = new Set(kioskJobs.map((job) => job.service));
     const kioskServices = db.services
@@ -2847,7 +3292,7 @@ function findCollectionItem(config, itemId) {
   return config.get().find((item) => String(item[config.key]) === itemId);
 }
 
-function validateSuperAdminRecord(collection, record) {
+function validateSuperAdminRecord(collection, record, existing = null) {
   if (collection === "releases") {
     return validateReleaseRecord(record);
   }
@@ -2859,8 +3304,18 @@ function validateSuperAdminRecord(collection, record) {
     }
   }
 
-  if (collection === "kiosks" && !db.projects.some((project) => project.projectId === record.projectId)) {
-    return "Select an existing project before creating the kiosk.";
+  if (collection === "kiosks") {
+    const kioskId = normalizeKioskCode(record.kioskId);
+    const setupCode = normalizeKioskCode(record.setupCode, 16);
+    const ignoreKioskId = normalizeKioskCode(existing?.kioskId || "");
+
+    if (!kioskId) return "Kiosk ID is required.";
+    if (kioskIdInUse(kioskId, ignoreKioskId)) return "Kiosk ID already exists. Use a unique kiosk ID.";
+    if (!setupCode) return "Mini PC setup code is required.";
+    if (setupCodeInUse(setupCode, ignoreKioskId)) return "Mini PC setup code already exists. Generate a new setup code.";
+    if (!db.projects.some((project) => project.projectId === record.projectId)) {
+      return "Select an existing project before creating the kiosk.";
+    }
   }
 
   if (collection === "kioskAdmins") {
@@ -2957,7 +3412,7 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
     if (validationError) return json(res, 400, { error: validationError });
     const id = String(record[config.key]);
     if (!id) return json(res, 400, { error: `${config.key} is required.` });
-    if (items.some((item) => String(item[config.key]) === id)) {
+    if (items.some((item) => String(item[config.key]).toUpperCase() === id.toUpperCase())) {
       return json(res, 409, { error: "Record already exists." });
     }
     items.push(record);
@@ -2970,7 +3425,7 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
     const index = items.findIndex((item) => String(item[config.key]) === itemId);
     if (index === -1) return json(res, 404, { error: "Record not found" });
     const record = config.normalize({ ...items[index], ...(body[collection.slice(0, -1)] || body), [config.key]: items[index][config.key] }, items[index]);
-    const validationError = validateSuperAdminRecord(collection, record);
+    const validationError = validateSuperAdminRecord(collection, record, items[index]);
     if (validationError) return json(res, 400, { error: validationError });
     items[index] = record;
     config.set(items);
@@ -3101,6 +3556,10 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname.startsWith("/api/admin/") && url.pathname !== "/api/admin/login") {
     if (!requireAdminSession(req, res, "kiosk-admin")) return;
+  }
+
+  if (url.pathname.startsWith("/api/admin/") && url.pathname !== "/api/admin/login" && req.method !== "GET") {
+    return json(res, 403, { error: "Create, update, and delete actions are available only in Super Admin." });
   }
 
   if (url.pathname.startsWith("/api/super-admin/") && url.pathname !== "/api/super-admin/login") {
@@ -3236,6 +3695,17 @@ const server = http.createServer(async (req, res) => {
     return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename));
   }
 
+  if (req.method === "GET" && url.pathname.startsWith("/uploads/client-logos/")) {
+    const filename = path.basename(decodeURIComponent(url.pathname.split("/").pop() || ""));
+    const filePath = path.join(CLIENT_LOGO_DIR, filename);
+
+    if (!filename || !filePath.startsWith(CLIENT_LOGO_DIR) || !fs.existsSync(filePath)) {
+      return json(res, 404, { error: "Client logo not found" });
+    }
+
+    return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename));
+  }
+
   if (req.method === "POST" && (url.pathname === "/api/admin/service-image" || url.pathname === "/api/super-admin/service-image")) {
     if (!isMultipart) {
       return json(res, 400, { error: "Upload must use multipart/form-data." });
@@ -3263,6 +3733,36 @@ const server = http.createServer(async (req, res) => {
       filename,
       size: file.content.length
     });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/super-admin/client-logo") {
+    if (!isMultipart) {
+      return json(res, 400, { error: "Upload must use multipart/form-data." });
+    }
+
+    const parts = parseMultipartParts(await readRawBody(req), req.headers["content-type"] || "");
+    const file = parts.find((part) => part.filename && ["logo", "clientLogo", "clientLogoImage"].includes(part.name)) ||
+      parts.find((part) => part.filename);
+
+    if (!isAllowedClientLogo(file)) {
+      return json(res, 400, { error: "Upload a PNG, JPG, GIF, or WebP client logo." });
+    }
+
+    if (file.content.length > 4 * 1024 * 1024) {
+      return json(res, 413, { error: "Client logo must be 4 MB or smaller." });
+    }
+
+    try {
+      const stored = await storeClientLogoUpload(req, file);
+      return json(res, 201, {
+        imageUrl: stored.imageUrl,
+        storage: stored.storage,
+        filename: stored.filename,
+        size: stored.size
+      });
+    } catch (error) {
+      return json(res, 500, { error: error.message || "Client logo upload failed." });
+    }
   }
 
   if (req.method === "GET" && url.pathname === "/api/mobile-upload/session") {
@@ -3346,6 +3846,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/jobs/create") {
+    const settingsError = validateCustomerJobOptions(body);
+    if (settingsError) return json(res, 400, { error: settingsError });
+
     const job = createJob(body);
     return json(res, 201, { job });
   }
@@ -3363,10 +3866,17 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/jobs/settings") {
     const job = findJob(body.jobId);
     if (!job) return json(res, 404, { error: "Job not found" });
+    const settingsError = validateCustomerJobOptions(body, job);
+    if (settingsError) return json(res, 400, { error: settingsError });
+
+    const printOptions = normalizeJobPrintOptions(body, job);
     Object.assign(job, {
-      copies: Number(body.copies || job.copies),
-      colorMode: body.colorMode || job.colorMode,
-      paperSize: body.paperSize || job.paperSize,
+      copies: printOptions.copies,
+      colorMode: printOptions.colorMode,
+      paperSize: printOptions.paperSize,
+      sides: printOptions.sides,
+      orientation: printOptions.orientation,
+      pageRange: printOptions.pageRange,
       printStatus: "Settings Selected"
     });
     saveData();
@@ -3420,6 +3930,10 @@ const server = http.createServer(async (req, res) => {
         setup: "Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET before starting the kiosk."
       });
     }
+
+    const existingJob = findJob(body.jobId);
+    const settingsError = validateCustomerJobOptions(body, existingJob);
+    if (settingsError) return json(res, 400, { error: settingsError });
 
     const job = upsertPaymentJob(body);
     const amount = amountToPaise(job.amount);
@@ -3605,18 +4119,18 @@ const server = http.createServer(async (req, res) => {
     const adminServices = servicesForAdmin(adminSession);
     const gross = adminJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
     const refunds = adminRefunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
-    return json(res, 200, { gross, refunds, net: gross - refunds, pricing: pricingForServices(adminServices), services: adminServices, config: db.config });
+    return json(res, 200, { gross, refunds, net: gross - refunds, pricing: pricingForServices(adminServices, [...kioskIdsForAdmin(adminSession)]), services: adminServices, config: db.config });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/pricing") {
     const adminServices = servicesForAdmin(adminSession);
-    return json(res, 200, { pricing: pricingForServices(adminServices), services: adminServices, config: db.config });
+    return json(res, 200, { pricing: pricingForServices(adminServices, [...kioskIdsForAdmin(adminSession)]), services: adminServices, config: db.config });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/services") {
     const kioskId = url.searchParams.get("kioskId");
     const services = servicesForAdmin(adminSession, kioskId);
-    return json(res, 200, { services, pricing: pricingForServices(services), config: db.config });
+    return json(res, 200, { services, pricing: pricingForServices(services, [...kioskIdsForAdmin(adminSession)]), config: db.config });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/transactions") {
@@ -3727,7 +4241,7 @@ const server = http.createServer(async (req, res) => {
       projects: projectsForAdmin(adminSession),
       kiosks: kiosksForAdmin(adminSession),
       services: servicesForAdmin(adminSession),
-      pricing: pricingForServices(servicesForAdmin(adminSession)),
+      pricing: pricingForServices(servicesForAdmin(adminSession), [...kioskIdsForAdmin(adminSession)]),
       config: db.config
     });
   }
@@ -3736,6 +4250,8 @@ const server = http.createServer(async (req, res) => {
     const rawKiosk = body.kiosk || body;
     const fallbackProjectId = projectsForAdmin(adminSession)[0]?.projectId || "";
     const projectId = slug(rawKiosk.projectId || fallbackProjectId, "");
+    const requestedKioskId = normalizeKioskCode(rawKiosk.kioskId);
+    const requestedSetupCode = normalizeKioskCode(rawKiosk.setupCode, 16);
 
     if (!projectId || !adminCanAccessProject(adminSession, projectId)) {
       return json(res, 403, { error: "Select a project allocated to this client before creating the kiosk." });
@@ -3747,18 +4263,42 @@ const server = http.createServer(async (req, res) => {
       adminId: adminSession.adminId
     });
 
-    if (db.kiosks.some((item) => String(item.kioskId).toUpperCase() === kiosk.kioskId)) {
-      return json(res, 409, { error: "Kiosk ID already exists." });
+    if (!requestedKioskId || !kiosk.kioskId) {
+      return json(res, 400, { error: "Kiosk ID is required." });
+    }
+
+    if (!requestedSetupCode || !kiosk.setupCode) {
+      return json(res, 400, { error: "Mini PC setup code is required." });
+    }
+
+    if (kioskIdInUse(kiosk.kioskId)) {
+      return json(res, 409, { error: "Kiosk ID already exists. Use a unique kiosk ID." });
+    }
+
+    if (setupCodeInUse(kiosk.setupCode)) {
+      return json(res, 409, { error: "Mini PC setup code already exists. Generate a new setup code." });
     }
 
     db.kiosks.push(kiosk);
+    db.kioskAdmins = db.kioskAdmins.map((admin) => {
+      if (admin.adminId !== adminSession.adminId || !Array.isArray(admin.kioskIds) || !admin.kioskIds.length) {
+        return admin;
+      }
+
+      return {
+        ...admin,
+        kioskIds: [...new Set([...admin.kioskIds.map((id) => normalizeKioskCode(id)).filter(Boolean), kiosk.kioskId])]
+      };
+    });
+    touchConfig("kiosk-created");
+    saveSettings();
     saveData();
     return json(res, 201, { kiosk, kiosks: kiosksForAdmin(adminSession) });
   }
 
   if ((req.method === "PUT" || req.method === "PATCH") && url.pathname.startsWith("/api/admin/kiosks/")) {
-    const kioskId = decodeSegment(url.pathname.split("/")[4] || "").toUpperCase();
-    const index = db.kiosks.findIndex((item) => String(item.kioskId || "").toUpperCase() === kioskId);
+    const kioskId = normalizeKioskCode(decodeSegment(url.pathname.split("/")[4] || ""));
+    const index = db.kiosks.findIndex((item) => normalizeKioskCode(item.kioskId) === kioskId);
 
     if (index === -1) {
       return json(res, 404, { error: "Kiosk not found." });
@@ -3783,14 +4323,24 @@ const server = http.createServer(async (req, res) => {
       adminId: adminSession.adminId
     }, db.kiosks[index]);
 
+    if (!kiosk.setupCode) {
+      return json(res, 400, { error: "Mini PC setup code is required." });
+    }
+
+    if (setupCodeInUse(kiosk.setupCode, db.kiosks[index].kioskId)) {
+      return json(res, 409, { error: "Mini PC setup code already exists. Generate a new setup code." });
+    }
+
     db.kiosks[index] = kiosk;
+    touchConfig("kiosk-updated");
+    saveSettings();
     saveData();
     return json(res, 200, { kiosk, kiosks: kiosksForAdmin(adminSession) });
   }
 
   if (req.method === "DELETE" && url.pathname.startsWith("/api/admin/kiosks/")) {
-    const kioskId = decodeSegment(url.pathname.split("/")[4] || "").toUpperCase();
-    const index = db.kiosks.findIndex((item) => String(item.kioskId || "").toUpperCase() === kioskId);
+    const kioskId = normalizeKioskCode(decodeSegment(url.pathname.split("/")[4] || ""));
+    const index = db.kiosks.findIndex((item) => normalizeKioskCode(item.kioskId) === kioskId);
 
     if (index === -1) {
       return json(res, 404, { error: "Kiosk not found." });
@@ -3801,6 +4351,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     const [deleted] = db.kiosks.splice(index, 1);
+    db.kioskAdmins = db.kioskAdmins.map((admin) => ({
+      ...admin,
+      kioskIds: Array.isArray(admin.kioskIds)
+        ? admin.kioskIds.map((id) => normalizeKioskCode(id)).filter((id) => id && id !== kioskId)
+        : []
+    }));
+    touchConfig("kiosk-deleted");
+    saveSettings();
     saveData();
     return json(res, 200, { deleted, kiosks: kiosksForAdmin(adminSession) });
   }
@@ -3816,8 +4374,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/admin/pricing") {
     const adminServices = servicesForAdmin(adminSession);
     const allowedServiceIds = new Set(adminServices.map((service) => service.id));
+    const allowedKioskIds = kioskIdsForAdmin(adminSession);
     const requestedPricing = body.pricing || body;
     const scopedPricing = {};
+    const scopedKioskPricing = {};
 
     if (requestedPricing && typeof requestedPricing === "object") {
       Object.entries(requestedPricing).forEach(([serviceId, rates]) => {
@@ -3825,9 +4385,32 @@ const server = http.createServer(async (req, res) => {
           scopedPricing[serviceId] = rates;
         }
       });
+
+      Object.entries(requestedPricing.__kiosks || {}).forEach(([rawKioskId, kioskPricing]) => {
+        const kioskId = normalizeKioskCode(rawKioskId);
+        if (!kioskId || !allowedKioskIds.has(kioskId) || !kioskPricing || typeof kioskPricing !== "object") return;
+
+        const scopedRates = {};
+        Object.entries(kioskPricing).forEach(([serviceId, rates]) => {
+          if (allowedServiceIds.has(serviceId)) {
+            scopedRates[serviceId] = rates;
+          }
+        });
+
+        if (Object.keys(scopedRates).length) {
+          scopedKioskPricing[kioskId] = scopedRates;
+        }
+      });
     }
 
-    db.pricing = normalizePricing({ ...db.pricing, ...scopedPricing }, db.services);
+    db.pricing = normalizePricing({
+      ...db.pricing,
+      ...scopedPricing,
+      __kiosks: {
+        ...(db.pricing.__kiosks || {}),
+        ...scopedKioskPricing
+      }
+    }, db.services);
     db.services = db.services.map((service) => ({
       ...service,
       pricing: db.pricing[service.id] || service.pricing
@@ -3836,7 +4419,7 @@ const server = http.createServer(async (req, res) => {
     saveSettings();
     saveData();
     const scopedServices = servicesForAdmin(adminSession);
-    return json(res, 200, { pricing: pricingForServices(scopedServices), services: scopedServices, config: db.config });
+    return json(res, 200, { pricing: pricingForServices(scopedServices, [...kioskIdsForAdmin(adminSession)]), services: scopedServices, config: db.config });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/services") {
@@ -3848,7 +4431,7 @@ const server = http.createServer(async (req, res) => {
     saveSettings();
     saveData();
     const scopedServices = servicesForAdmin(adminSession);
-    return json(res, 200, { services: scopedServices, pricing: pricingForServices(scopedServices), config: db.config });
+    return json(res, 200, { services: scopedServices, pricing: pricingForServices(scopedServices, [...kioskIdsForAdmin(adminSession)]), config: db.config });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/refund") {

@@ -4,12 +4,32 @@
       "id": "govt-form",
       "icon": "GP",
       "title": "Govt Form Print",
+      "titleHi": "",
+      "titleMr": "",
       "description": "Print blank government form templates without upload.",
+      "descriptionHi": "",
+      "descriptionMr": "",
       "defaultPages": 1,
       "mode": "template",
       "imageUrl": "",
       "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
       "kioskIds": [],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
       "pricing": {
         "bw": 3,
         "color": 12
@@ -20,6 +40,8 @@
           "title": "Birth Certificate Form",
           "description": "Blank Form No. 5 birth certificate template.",
           "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
           "fields": [
             "Name",
             "Sex",
@@ -28,13 +50,16 @@
             "Mother name",
             "Father name"
           ],
-          "imageUrl": ""
+          "imageUrl": "",
+          "documentType": "image"
         },
         {
           "id": "voter-form-6",
           "title": "Form 6",
           "description": "Blank voter registration application template.",
           "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
           "fields": [
             "Applicant",
             "Age / DOB",
@@ -42,13 +67,16 @@
             "Constituency",
             "Mobile"
           ],
-          "imageUrl": ""
+          "imageUrl": "",
+          "documentType": "image"
         },
         {
           "id": "voter-form-8",
           "title": "Form 8",
           "description": "Blank voter correction or shifting application template.",
           "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
           "fields": [
             "Applicant",
             "EPIC No.",
@@ -56,13 +84,16 @@
             "Correct details",
             "Mobile"
           ],
-          "imageUrl": ""
+          "imageUrl": "",
+          "documentType": "image"
         },
         {
           "id": "domicile-certificate",
           "title": "Domicile Certificate Form",
           "description": "Blank domicile certificate application format.",
           "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
           "fields": [
             "Applicant",
             "DOB",
@@ -70,13 +101,16 @@
             "Years of residence",
             "Mobile"
           ],
-          "imageUrl": ""
+          "imageUrl": "",
+          "documentType": "image"
         },
         {
           "id": "income-certificate",
           "title": "Income Certificate Form",
           "description": "Blank income certificate request template.",
           "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
           "fields": [
             "Applicant",
             "Occupation",
@@ -84,13 +118,16 @@
             "Purpose",
             "Mobile"
           ],
-          "imageUrl": ""
+          "imageUrl": "",
+          "documentType": "image"
         },
         {
           "id": "caste-certificate",
           "title": "Caste Certificate Form",
           "description": "Blank caste certificate application template.",
           "pages": 1,
+          "paperSize": "Auto",
+          "orientation": "portrait",
           "fields": [
             "Applicant",
             "Caste",
@@ -98,80 +135,8 @@
             "Address",
             "Mobile"
           ],
-          "imageUrl": ""
-        }
-      ]
-    },
-    {
-      "id": "college-form",
-      "icon": "CF",
-      "title": "College Form Print",
-      "description": "Print admission, exam, certificate, and fee forms.",
-      "defaultPages": 1,
-      "mode": "template",
-      "imageUrl": "",
-      "enabled": true,
-      "kioskIds": [],
-      "pricing": {
-        "bw": 3,
-        "color": 12
-      },
-      "templates": [
-        {
-          "id": "admission-form",
-          "title": "Admission Form",
-          "description": "Student admission details and guardian section.",
-          "pages": 1,
-          "fields": [
-            "Student",
-            "Course",
-            "DOB",
-            "Mobile",
-            "Signature"
-          ],
-          "imageUrl": ""
-        },
-        {
-          "id": "exam-registration",
-          "title": "Exam Registration Form",
-          "description": "Semester exam subject and fee declaration.",
-          "pages": 1,
-          "fields": [
-            "Student",
-            "Roll No.",
-            "Semester",
-            "Subjects",
-            "Mobile"
-          ],
-          "imageUrl": ""
-        },
-        {
-          "id": "scholarship-form",
-          "title": "Scholarship Form",
-          "description": "Student scholarship request and document list.",
-          "pages": 1,
-          "fields": [
-            "Student",
-            "Course",
-            "Income",
-            "Category",
-            "Mobile"
-          ],
-          "imageUrl": ""
-        },
-        {
-          "id": "bonafide-request",
-          "title": "Bonafide Certificate Request",
-          "description": "Certificate request form for college office.",
-          "pages": 1,
-          "fields": [
-            "Student",
-            "Roll No.",
-            "Course",
-            "Purpose",
-            "Mobile"
-          ],
-          "imageUrl": ""
+          "imageUrl": "",
+          "documentType": "image"
         }
       ]
     }
@@ -180,16 +145,12 @@
     "govt-form": {
       "bw": 3,
       "color": 12
-    },
-    "college-form": {
-      "bw": 3,
-      "color": 12
     }
   },
   "config": {
-    "version": 1781433405852,
-    "updatedAt": "2026-06-14T10:36:45.852Z",
-    "reason": "services-updated"
+    "version": 1784282505128,
+    "updatedAt": "2026-07-17T10:01:45.128Z",
+    "reason": "pricing-updated"
   },
-  "updatedAt": "2026-06-14T10:36:45.852Z"
+  "updatedAt": "2026-07-17T10:01:45.128Z"
 }

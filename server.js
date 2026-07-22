@@ -2553,78 +2553,185 @@ function renderMobileUploadPage(session) {
     });
   }
 
+  // Session already used: block as soon as status=uploaded.
+  // Do NOT wait for session.claimed — that requires the kiosk to poll first.
+  // Blocking immediately closes the race window where a fast user could
+  // re-visit and re-upload before the kiosk had a chance to poll.
+  if (session.status === "uploaded") {
+    return renderMobileStatusPage({
+      title: "Session used",
+      heading: "This upload session is no longer active",
+      description: "The kiosk has already received your documents and moved to the preview screen.",
+      note: "Go back to the kiosk and tap Back to get a new QR code if you want to upload a different file.",
+      warning: true
+    });
+  }
+
+  const token = escapeHtml(session.token);
+
+  // Inline script: AJAX submit + instant UI swap + real-time polling
   const script = `
-    const form = document.getElementById("upload-form");
-    const input = document.getElementById("documents");
-    const zone = document.getElementById("upload-zone");
-    const selection = document.getElementById("selection");
-    const count = document.getElementById("selection-count");
-    const list = document.getElementById("file-list");
-    const message = document.getElementById("message");
-    const clearButton = document.getElementById("clear-files");
-    const submitButton = document.getElementById("submit-button");
-    const supported = /\\.(pdf|jpe?g|png)$/i;
+    (function () {
+      var TOKEN   = ${JSON.stringify(session.token)};
+      var MAX     = ${MAX_FILES_PER_JOB};
+      var POLL_MS = 2500;
+      var supported = /\\.(pdf|jpe?g|png)$/i;
 
-    function showError(text) {
-      message.textContent = text;
-      message.hidden = !text;
-    }
+      var form         = document.getElementById('upload-form');
+      var input        = document.getElementById('documents');
+      var zone         = document.getElementById('upload-zone');
+      var selection    = document.getElementById('selection');
+      var count        = document.getElementById('selection-count');
+      var list         = document.getElementById('file-list');
+      var message      = document.getElementById('message');
+      var clearButton  = document.getElementById('clear-files');
+      var submitButton = document.getElementById('submit-button');
+      var cardHead     = document.querySelector('.card-head');
+      var cardBody     = document.querySelector('.card-body');
+      var poller       = null;
 
-    function resetFiles() {
-      input.value = "";
-      selection.hidden = true;
-      zone.classList.remove("selected");
-      submitButton.disabled = true;
-      list.replaceChildren();
-    }
-
-    input.addEventListener("change", () => {
-      const files = Array.from(input.files || []);
-      showError("");
-
-      if (files.length > ${MAX_FILES_PER_JOB}) {
-        resetFiles();
-        showError("Choose no more than ${MAX_FILES_PER_JOB} files.");
-        return;
+      /* ── helpers ─────────────────────────────── */
+      function showError(text) {
+        message.textContent = text;
+        message.hidden = !text;
       }
 
-      if (files.some((file) => !supported.test(file.name))) {
-        resetFiles();
-        showError("Only PDF, JPG, JPEG, and PNG files are supported.");
-        return;
+      function resetFiles() {
+        input.value = '';
+        selection.hidden = true;
+        zone.classList.remove('selected');
+        submitButton.disabled = true;
+        list.replaceChildren();
       }
 
-      if (!files.length) {
-        resetFiles();
-        return;
-      }
+      /* ── file picker ─────────────────────────── */
+      input.addEventListener('change', function () {
+        var files = Array.from(input.files || []);
+        showError('');
 
-      count.textContent = files.length + (files.length === 1 ? " file selected" : " files selected");
-      list.replaceChildren();
-      files.slice(0, 4).forEach((file) => {
-        const item = document.createElement("li");
-        const name = document.createElement("span");
-        name.textContent = file.name;
-        item.appendChild(name);
-        list.appendChild(item);
+        if (files.length > MAX) {
+          resetFiles();
+          showError('Choose no more than ' + MAX + ' files.');
+          return;
+        }
+        if (files.some(function (f) { return !supported.test(f.name); })) {
+          resetFiles();
+          showError('Only PDF, JPG, JPEG, and PNG files are supported.');
+          return;
+        }
+        if (!files.length) { resetFiles(); return; }
+
+        count.textContent = files.length + (files.length === 1 ? ' file selected' : ' files selected');
+        list.replaceChildren();
+        files.slice(0, 4).forEach(function (f) {
+          var li = document.createElement('li');
+          var sp = document.createElement('span');
+          sp.textContent = f.name;
+          li.appendChild(sp);
+          list.appendChild(li);
+        });
+        if (files.length > 4) {
+          var li = document.createElement('li');
+          var sp = document.createElement('span');
+          sp.textContent = '+ ' + (files.length - 4) + ' more file(s)';
+          li.appendChild(sp);
+          list.appendChild(li);
+        }
+        selection.hidden = false;
+        zone.classList.add('selected');
+        submitButton.disabled = false;
       });
-      if (files.length > 4) {
-        const item = document.createElement("li");
-        const name = document.createElement("span");
-        name.textContent = "+ " + (files.length - 4) + " more file(s)";
-        item.appendChild(name);
-        list.appendChild(item);
-      }
-      selection.hidden = false;
-      zone.classList.add("selected");
-      submitButton.disabled = false;
-    });
 
-    clearButton.addEventListener("click", resetFiles);
-    form.addEventListener("submit", () => {
-      submitButton.disabled = true;
-      submitButton.textContent = "Sending securely...";
-    });
+      clearButton.addEventListener('click', resetFiles);
+
+      /* ── sent view ───────────────────────────── */
+      function showSentView(fileCount) {
+        // Swap header
+        cardHead.innerHTML =
+          '<span class="eyebrow">Upload complete</span>' +
+          '<h1>Documents Sent!</h1>' +
+          '<p class="lead">Your ' + (fileCount === 1 ? 'file is' : fileCount + ' files are') +
+          ' ready on the Print Kiosk screen.</p>';
+
+        // Swap body to scan-again state
+        cardBody.innerHTML =
+          '<div class="status">' +
+            '<div class="status-icon" id="sent-icon">&#10003;</div>' +
+            '<h2 id="sent-title">You are all set</h2>' +
+            '<p id="sent-msg">Continue on the kiosk to review and pay.</p>' +
+            '<div class="status-note" id="sent-note">' +
+              'This QR session is now closed. To upload more files, go back to the kiosk and tap <strong>Back</strong> to get a new QR code.' +
+            '</div>' +
+          '</div>';
+
+        startPolling();
+      }
+
+      /* ── real-time polling ───────────────────── */
+      function startPolling() {
+        if (poller) return;
+        poller = setInterval(function () {
+          fetch('/api/mobile-upload/' + TOKEN + '/status')
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+              if (!data) { clearInterval(poller); return; }
+              // Session not found means the kiosk has started fresh — show scan-again
+              if (data.error) {
+                clearInterval(poller);
+                showScanAgain();
+              }
+            })
+            .catch(function () {});
+        }, POLL_MS);
+      }
+
+      function showScanAgain() {
+        var icon  = document.getElementById('sent-icon');
+        var title = document.getElementById('sent-title');
+        var msg   = document.getElementById('sent-msg');
+        var note  = document.getElementById('sent-note');
+        if (icon)  { icon.classList.add('warn'); icon.textContent = '!'; }
+        if (title) title.textContent = 'Scan a new QR code';
+        if (msg)   msg.textContent   = 'The kiosk has moved on. Your previous session is closed.';
+        if (note)  note.innerHTML    = 'Return to the kiosk and tap <strong>Back</strong> to generate a fresh QR code, then scan it with your phone.';
+      }
+
+      /* ── AJAX submit ─────────────────────────── */
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+
+        var files = Array.from(input.files || []);
+        if (!files.length) { showError('Please choose at least one file.'); return; }
+
+        submitButton.disabled = true;
+        submitButton.textContent = 'Sending securely\u2026';
+        showError('');
+
+        var fd = new FormData(form);
+
+        fetch('/mobile-upload/' + TOKEN + '/upload', {
+          method: 'POST',
+          body: fd
+        })
+        .then(function (r) {
+          if (r.ok || r.status === 409) {
+            // 200 = accepted, 409 = already used (treat both as done)
+            showSentView(files.length);
+          } else {
+            return r.text().then(function () {
+              showError('Upload failed. Please try again.');
+              submitButton.disabled = false;
+              submitButton.textContent = 'Send to Print Kiosk';
+            });
+          }
+        })
+        .catch(function () {
+          showError('Network error. Check your connection and try again.');
+          submitButton.disabled = false;
+          submitButton.textContent = 'Send to Print Kiosk';
+        });
+      });
+    })();
   `;
 
   return renderMobileUploadShell({
@@ -2638,7 +2745,7 @@ function renderMobileUploadPage(session) {
         <div class="step"><span>2</span>Send</div>
         <div class="step"><span>3</span>Preview</div>
       </div>
-      <form id="upload-form" method="POST" action="/mobile-upload/${escapeHtml(session.token)}/upload" enctype="multipart/form-data">
+      <form id="upload-form" enctype="multipart/form-data">
         <label class="upload-zone" id="upload-zone" for="documents">
           <input id="documents" name="documents" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" multiple required />
           <span class="upload-icon" aria-hidden="true">&#8593;</span>
@@ -3778,6 +3885,13 @@ const server = http.createServer(async (req, res) => {
       return json(res, 404, { error: "Upload session not found" });
     }
 
+    // Mark session as claimed once the kiosk reads that the file was uploaded.
+    // This signals the mobile page that this session is consumed and prevents
+    // the user from re-submitting a file to a token the kiosk is no longer watching.
+    if (session.status === "uploaded" && !session.claimed) {
+      session.claimed = true;
+    }
+
     return json(res, 200, uploadSessionResponse(session, req));
   }
 
@@ -3807,6 +3921,19 @@ const server = http.createServer(async (req, res) => {
 
     if (!session) {
       return html(res, 404, renderMobileUploadPage(null));
+    }
+
+    // Hard-block re-uploads to an already-used session.
+    // Once a file has been accepted this session is permanently locked.
+    // A new QR scan is required to start a fresh upload session.
+    if (session.status === "uploaded") {
+      return html(res, 409, renderMobileStatusPage({
+        title: "Session already used",
+        heading: "This upload session has already been used",
+        description: "Your documents were already sent to the Print Kiosk.",
+        note: "Go back to the kiosk and tap Back to get a new QR code if you want to send different files.",
+        warning: true
+      }));
     }
 
     const files = parseMultipartFiles(await readRawBody(req), req.headers["content-type"] || "");

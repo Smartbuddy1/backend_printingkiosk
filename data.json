@@ -746,7 +746,10 @@
         "default-project"
       ],
       "kioskIds": [],
-      "lastLoginAt": "2026-07-19T10:24:20.913Z"
+      "lastLoginAt": "2026-07-21T11:16:45.348Z",
+      "logoUrl": "",
+      "kioskTitle": "",
+      "kioskSubtitle": ""
     }
   ],
   "refunds": [],
@@ -756,5 +759,5 @@
     "updatedAt": "2026-07-19T09:39:19.135Z",
     "reason": "kiosks-updated"
   },
-  "updatedAt": "2026-07-19T10:24:20.913Z"
+  "updatedAt": "2026-07-21T11:16:45.348Z"
 }

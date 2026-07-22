@@ -3175,6 +3175,36 @@ function normalizeSuperAdminKiosk(record = {}, existing = {}) {
   };
 }
 
+function normalizeKioskPrinterHealth(record = {}) {
+  const source = record && typeof record === "object" ? record : {};
+  return {
+    available: source.available !== false,
+    online: Boolean(source.online),
+    ready: Boolean(source.ready),
+    busy: Boolean(source.busy),
+    paper: source.paper !== false,
+    paperLow: Boolean(source.paperLow),
+    paperJam: Boolean(source.paperJam),
+    doorOpen: Boolean(source.doorOpen),
+    tonerLow: Boolean(source.tonerLow),
+    tonerEmpty: Boolean(source.tonerEmpty),
+    queueError: Boolean(source.queueError),
+    outputBinFull: Boolean(source.outputBinFull),
+    serviceRequested: Boolean(source.serviceRequested),
+    printing: Boolean(source.printing),
+    workOffline: Boolean(source.workOffline),
+    errorMessage: String(source.errorMessage || "").trim().slice(0, 500),
+    printerName: String(source.printerName || "").trim().slice(0, 160),
+    queueLength: Math.max(0, Number(source.queueLength || 0)),
+    paperStatus: String(source.paperStatus || "Unknown").trim().slice(0, 80),
+    tonerStatus: String(source.tonerStatus || "Unknown").trim().slice(0, 80),
+    detectedErrorState: Number(source.detectedErrorState || 0),
+    detectedErrorText: String(source.detectedErrorText || "Unknown").trim().slice(0, 80),
+    printerStatus: Number(source.printerStatus || 0),
+    lastUpdated: source.lastUpdated || isoNow()
+  };
+}
+
 function normalizeSuperAdminRefund(record = {}, existing = {}) {
   const next = { ...existing, ...record };
 
@@ -3738,6 +3768,25 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/kiosk/config") {
     return json(res, 200, kioskConfigResponse(url.searchParams.get("kioskId") || ""));
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/kiosk/health") {
+    const kioskId = normalizeKioskCode(body.kioskId);
+    const kiosk = db.kiosks.find((item) => normalizeKioskCode(item.kioskId) === kioskId);
+    if (!kiosk) return json(res, 404, { error: "Kiosk not found." });
+
+    const printerHealth = normalizeKioskPrinterHealth(body.printerHealth || body.printer || {});
+    const now = isoNow();
+    Object.assign(kiosk, {
+      status: printerHealth.online || printerHealth.available ? "online" : "offline",
+      printer: printerHealth.printerName || kiosk.printer || "unknown",
+      printerHealth,
+      scanner: String(body.scannerStatus || kiosk.scanner || "unknown").trim(),
+      lastOnline: now
+    });
+    saveData();
+
+    return json(res, 200, { ok: true, kiosk });
   }
 
   if (req.method === "POST" && url.pathname === "/api/kiosk/admin-unlock") {

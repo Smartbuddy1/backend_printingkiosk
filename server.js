@@ -4098,6 +4098,27 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/payment/create") {
+    const existingJob = findJob(body.jobId);
+    const settingsError = validateCustomerJobOptions(body, existingJob);
+    if (settingsError) return json(res, 400, { error: settingsError });
+
+    const job = upsertPaymentJob(body);
+    const amount = amountToPaise(job.amount);
+    let razorpayOrder;
+
+    if (Number.isFinite(amount) && amount <= 0) {
+      job.amount = 0;
+      job.paymentStatus = "Payment Success";
+      job.printStatus = "In Queue";
+      saveData();
+      return json(res, 201, {
+        job,
+        payment: null,
+        freePrint: true,
+        checkout: null
+      });
+    }
+
     const config = razorpayConfig();
 
     if (!razorpayIsConfigured()) {
@@ -4107,16 +4128,8 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    const existingJob = findJob(body.jobId);
-    const settingsError = validateCustomerJobOptions(body, existingJob);
-    if (settingsError) return json(res, 400, { error: settingsError });
-
-    const job = upsertPaymentJob(body);
-    const amount = amountToPaise(job.amount);
-    let razorpayOrder;
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return json(res, 400, { error: "Payment amount must be greater than zero." });
+    if (!Number.isFinite(amount)) {
+      return json(res, 400, { error: "Payment amount is invalid." });
     }
 
     try {

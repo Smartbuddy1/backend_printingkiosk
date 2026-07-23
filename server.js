@@ -4221,7 +4221,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/print/status") {
-    const job = findJob(body.jobId);
+    let job = findJob(body.jobId);
+    if (!job && body.jobId) {
+      const settingsError = validateCustomerJobOptions(body);
+      if (settingsError) return json(res, 400, { error: settingsError });
+      job = upsertPaymentJob(body);
+    }
     if (!job) return json(res, 404, { error: "Job not found" });
 
     if (body.paymentStatus) {

@@ -1415,15 +1415,25 @@ function credentialsMatch(body, expected) {
   return identifier === String(expected.email || "").trim().toLowerCase() && password === String(expected.password || "");
 }
 
+function kioskAdminBrandFields(admin = {}) {
+  return {
+    logoUrl: normalizePublicAssetUrl(admin.logoUrl || admin.logo || admin.clientLogoUrl || ""),
+    kioskTitle: String(admin.kioskTitle || admin.headingTitle || "").trim(),
+    kioskSubtitle: String(admin.kioskSubtitle || admin.headingDescription || admin.description || "").trim()
+  };
+}
+
 function publicKioskAdmin(admin = {}) {
+  const brand = kioskAdminBrandFields(admin);
+
   return {
     adminId: admin.adminId,
     name: admin.name,
     email: admin.email,
     status: admin.status,
-    logoUrl: normalizePublicAssetUrl(admin.logoUrl || ""),
-    kioskTitle: String(admin.kioskTitle || "").trim(),
-    kioskSubtitle: String(admin.kioskSubtitle || "").trim(),
+    logoUrl: brand.logoUrl,
+    kioskTitle: brand.kioskTitle,
+    kioskSubtitle: brand.kioskSubtitle,
     projectIds: Array.isArray(admin.projectIds) ? admin.projectIds : [],
     kioskIds: Array.isArray(admin.kioskIds) ? admin.kioskIds : []
   };
@@ -1431,9 +1441,10 @@ function publicKioskAdmin(admin = {}) {
 
 function publicKioskClientBrand(admin = {}) {
   if (!admin) return null;
-  const logoUrl = normalizePublicAssetUrl(admin.logoUrl || "");
-  const title = String(admin.kioskTitle || "").trim();
-  const subtitle = String(admin.kioskSubtitle || "").trim();
+  const brand = kioskAdminBrandFields(admin);
+  const logoUrl = brand.logoUrl;
+  const title = brand.kioskTitle;
+  const subtitle = brand.kioskSubtitle;
 
   if (!logoUrl && !title && !subtitle) return null;
 
@@ -2181,7 +2192,7 @@ function verifyRazorpayWebhookBody(req, rawBody) {
   const provided = String(req.headers["x-razorpay-signature"] || "").trim();
 
   if (!webhookSecret) {
-    return { ok: true, verified: false };
+    return { ok: false, status: 503, error: "Razorpay webhook secret is not configured." };
   }
 
   if (!provided) {

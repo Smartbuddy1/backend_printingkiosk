@@ -3788,10 +3788,6 @@ const server = http.createServer(async (req, res) => {
 
     const printerHealth = normalizeKioskPrinterHealth(body.printerHealth || body.printer || {});
     const now = isoNow();
-    // Use `ready` (printer physically ready) for the kiosk status.
-    // `available` just means the agent responded — it is always true.
-    // A printer with a paper jam has available=true but ready=false, so
-    // we must use ready to correctly mark the kiosk offline on errors.
     const printerOnline = printerHealth.ready || (printerHealth.online && !printerHealth.paperJam && !printerHealth.tonerEmpty && !printerHealth.doorOpen && !printerHealth.outputBinFull && !printerHealth.serviceRequested);
     Object.assign(kiosk, {
       status: printerOnline ? "online" : "offline",
@@ -3802,6 +3798,27 @@ const server = http.createServer(async (req, res) => {
       lastOnline: now
     });
     saveData();
+
+    // Log every health ping so PM2 logs show exactly what each kiosk is sending
+    const flags = [
+      printerHealth.paperJam      ? "PAPER_JAM"      : null,
+      !printerHealth.paper        ? "NO_PAPER"        : null,
+      printerHealth.paperLow      ? "PAPER_LOW"       : null,
+      printerHealth.doorOpen      ? "DOOR_OPEN"       : null,
+      printerHealth.tonerEmpty    ? "TONER_EMPTY"     : null,
+      printerHealth.tonerLow      ? "TONER_LOW"       : null,
+      printerHealth.outputBinFull ? "OUTPUT_BIN_FULL" : null,
+      printerHealth.serviceRequested ? "SERVICE_REQ"  : null,
+      printerHealth.queueError    ? "QUEUE_ERROR"     : null,
+    ].filter(Boolean);
+
+    console.log(
+      `[HEALTH] ${kioskId} | status=${printerOnline ? "ONLINE" : "OFFLINE"}` +
+      ` | ready=${printerHealth.ready} | online=${printerHealth.online}` +
+      ` | paper="${printerHealth.paperStatus}" | toner="${printerHealth.tonerStatus}"` +
+      ` | flags=[${flags.join(",")}]` +
+      (printerHealth.errorMessage ? ` | error="${printerHealth.errorMessage}"` : "")
+    );
 
     return json(res, 200, { ok: true, kiosk });
   }

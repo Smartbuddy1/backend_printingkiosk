@@ -3788,8 +3788,14 @@ const server = http.createServer(async (req, res) => {
 
     const printerHealth = normalizeKioskPrinterHealth(body.printerHealth || body.printer || {});
     const now = isoNow();
+    // Use `ready` (printer physically ready) for the kiosk status.
+    // `available` just means the agent responded — it is always true.
+    // A printer with a paper jam has available=true but ready=false, so
+    // we must use ready to correctly mark the kiosk offline on errors.
+    const printerOnline = printerHealth.ready || (printerHealth.online && !printerHealth.paperJam && !printerHealth.tonerEmpty && !printerHealth.doorOpen && !printerHealth.outputBinFull && !printerHealth.serviceRequested);
     Object.assign(kiosk, {
-      status: printerHealth.online || printerHealth.available ? "online" : "offline",
+      status: printerOnline ? "online" : "offline",
+      printerErrorMessage: printerOnline ? null : (printerHealth.errorMessage || null),
       printer: printerHealth.printerName || kiosk.printer || "unknown",
       printerHealth,
       scanner: String(body.scannerStatus || kiosk.scanner || "unknown").trim(),

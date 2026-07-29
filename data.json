@@ -307,6 +307,7 @@
       "rate": 2
     }
   ],
+  "dailyStats": [],
   "payments": [
     {
       "paymentId": "PAY-1782200361287",
@@ -746,7 +747,7 @@
         "default-project"
       ],
       "kioskIds": [],
-      "lastLoginAt": "2026-07-29T10:18:22.567Z",
+      "lastLoginAt": "2026-07-29T11:51:41.316Z",
       "logoUrl": "",
       "kioskTitle": "",
       "kioskSubtitle": ""
@@ -759,5 +760,5 @@
     "updatedAt": "2026-07-19T09:39:19.135Z",
     "reason": "kiosks-updated"
   },
-  "updatedAt": "2026-07-29T10:18:22.568Z"
+  "updatedAt": "2026-07-29T11:51:41.316Z"
 }

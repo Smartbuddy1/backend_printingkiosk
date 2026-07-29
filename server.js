@@ -2951,8 +2951,7 @@ function setJobPrintStatus(job, printStatus, extra = {}) {
   }
 
   cleanupJobs();
-    job.failureReason = extra.failureReason || job.failureReason || "Print failed";
-  }
+
 
   saveData();
   return job;

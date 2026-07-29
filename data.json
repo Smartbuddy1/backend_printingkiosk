@@ -746,7 +746,7 @@
         "default-project"
       ],
       "kioskIds": [],
-      "lastLoginAt": "2026-07-21T11:16:45.348Z",
+      "lastLoginAt": "2026-07-29T10:18:22.567Z",
       "logoUrl": "",
       "kioskTitle": "",
       "kioskSubtitle": ""
@@ -759,5 +759,5 @@
     "updatedAt": "2026-07-19T09:39:19.135Z",
     "reason": "kiosks-updated"
   },
-  "updatedAt": "2026-07-21T11:16:45.348Z"
+  "updatedAt": "2026-07-29T10:18:22.568Z"
 }

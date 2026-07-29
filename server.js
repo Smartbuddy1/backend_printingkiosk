@@ -661,6 +661,7 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
 
   return {
     jobs: Array.isArray(persistedData.jobs) ? persistedData.jobs : [],
+    dailyStats: Array.isArray(persistedData.dailyStats) ? persistedData.dailyStats : [],
     payments: Array.isArray(persistedData.payments) ? persistedData.payments : [],
     services,
     pricing: normalizePricing(persistedData.pricing || persistedSettings.pricing, services),
@@ -721,6 +722,7 @@ function writeJsonAtomic(filePath, value) {
 function dataSnapshot() {
   return {
     jobs: db.jobs,
+    dailyStats: db.dailyStats,
     payments: db.payments,
     services: db.services,
     pricing: db.pricing,
@@ -2899,15 +2901,56 @@ function upsertPaymentJob(body) {
   return job;
 }
 
+function aggregateJobToDailyStats(job) {
+  if (job.aggregated) return;
+  
+  const date = new Date().toISOString().split("T")[0];
+  const kioskId = normalizeKioskCode(job.kioskId);
+  const templateId = String(job.templateId || "Unknown");
+  const isSuccess = /completed/i.test(job.printStatus);
+  const amount = isSuccess ? Number(job.amount || 0) : 0;
+  
+  let stat = db.dailyStats.find(s => s.date === date && s.kioskId === kioskId && s.templateId === templateId);
+  if (!stat) {
+    stat = { date, kioskId, templateId, prints: 0, revenue: 0, upiPayments: 0 };
+    db.dailyStats.push(stat);
+  }
+  
+  if (isSuccess) {
+    stat.prints += 1;
+    stat.revenue += amount;
+    if (String(job.paymentMethod || "UPI").toUpperCase().includes("UPI")) {
+      stat.upiPayments += 1;
+    }
+  }
+  
+  job.aggregated = true;
+}
+
+function cleanupJobs() {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  db.jobs = db.jobs.filter(job => {
+    if (!/completed|failed/i.test(job.printStatus || "")) return true;
+    const jobTime = new Date(job.completedAt || job.failedAt || job.createdAt || Date.now()).getTime();
+    return jobTime > cutoff;
+  });
+}
+
 function setJobPrintStatus(job, printStatus, extra = {}) {
   job.printStatus = printStatus || job.printStatus;
 
   if (/completed/i.test(job.printStatus)) {
-    job.completedAt = new Date().toISOString();
+    job.completedAt = job.completedAt || new Date().toISOString();
+    aggregateJobToDailyStats(job);
   }
 
   if (/failed/i.test(job.printStatus)) {
-    job.failedAt = new Date().toISOString();
+    job.failedAt = job.failedAt || new Date().toISOString();
+    job.failureReason = extra.failureReason || job.failureReason || "Print failed";
+    aggregateJobToDailyStats(job);
+  }
+
+  cleanupJobs();
     job.failureReason = extra.failureReason || job.failureReason || "Print failed";
   }
 
@@ -3351,7 +3394,7 @@ function saveSuperAdminCollection(collection) {
 }
 
 function superAdminSummary() {
-  const gross = db.jobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
+  const gross = db.dailyStats.reduce((sum, stat) => sum + stat.revenue, 0);
   const refunds = db.refunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
   const templates = db.services.reduce((sum, service) => sum + (service.templates?.length || 0), 0);
 
@@ -3361,13 +3404,13 @@ function superAdminSummary() {
     kiosks: db.kiosks.length,
     services: db.services.length,
     templates,
-    jobs: db.jobs.length,
+    jobs: db.dailyStats.reduce((sum, stat) => sum + stat.prints, 0),
     payments: db.payments.length,
     refunds: db.refunds.length,
     releases: db.releases.length,
     gross,
     net: gross - refunds,
-    failedJobs: db.jobs.filter((job) => /failed/i.test(job.printStatus || "")).length,
+    failedJobs: 0,
     activeKiosks: db.kiosks.filter((kiosk) => kiosk.status === "online").length
   };
 }
@@ -3380,36 +3423,22 @@ function buildSuperAdminHierarchy() {
       (admin.projectIds || []).includes(kiosk.projectId)
     )) || null;
     const kioskCode = normalizeKioskCode(kiosk.kioskId);
-    const kioskJobs = db.jobs.filter((job) => normalizeKioskCode(job.kioskId) === kioskCode);
-    const jobIds = new Set(kioskJobs.map((job) => job.jobId));
-    const serviceIds = new Set(kioskJobs.map((job) => job.service));
-    const kioskServices = db.services
-      .filter((service) => serviceAppliesToKiosk(service, kiosk, kiosk.kioskId) || serviceIds.has(service.id))
-      .map((service) => {
-        const serviceJobs = kioskJobs.filter((job) => job.service === service.id);
-        const revenue = serviceJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
-
-        return {
-          ...service,
-          jobCount: serviceJobs.length,
-          revenue,
-          failedJobs: serviceJobs.filter((job) => /failed/i.test(job.printStatus || "")).length
-        };
-      });
+    
+    const kioskStats = db.dailyStats.filter(stat => stat.kioskId === kioskCode);
+    const kioskServices = db.services.filter((service) => serviceAppliesToKiosk(service, kiosk, kiosk.kioskId));
 
     return {
-      ...kiosk,
-      project,
-      admin: kioskAdmin ? publicKioskAdmin(kioskAdmin) : null,
-      services: kioskServices,
-      jobs: kioskJobs,
-      payments: db.payments.filter((payment) => jobIds.has(payment.jobId)),
-      refunds: db.refunds.filter((refund) => jobIds.has(refund.jobId)),
+      kioskId: kioskCode,
+      name: kiosk.name,
+      status: kiosk.status,
+      project: project ? { projectId: project.projectId, name: project.name } : null,
+      admin: kioskAdmin ? { adminId: kioskAdmin.adminId, name: kioskAdmin.name, email: kioskAdmin.email } : null,
+      services: kioskServices.map((service) => ({ id: service.id, name: service.name })),
       totals: {
-        jobs: kioskJobs.length,
-        payments: db.payments.filter((payment) => jobIds.has(payment.jobId)).length,
-        revenue: kioskJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0),
-        failedJobs: kioskJobs.filter((job) => /failed/i.test(job.printStatus || "")).length
+        jobs: kioskStats.reduce((sum, stat) => sum + stat.prints, 0),
+        payments: 0,
+        revenue: kioskStats.reduce((sum, stat) => sum + stat.revenue, 0),
+        failedJobs: 0
       }
     };
   });
@@ -3420,7 +3449,8 @@ function superAdminSnapshot() {
     summary: superAdminSummary(),
     hierarchy: buildSuperAdminHierarchy(),
     data: {
-      jobs: db.jobs,
+      dailyStats: db.dailyStats,
+      jobs: [],
       payments: db.payments,
       services: db.services,
       pricing: db.pricing,
@@ -3788,6 +3818,10 @@ const server = http.createServer(async (req, res) => {
 
     const printerHealth = normalizeKioskPrinterHealth(body.printerHealth || body.printer || {});
     const now = isoNow();
+    // Use `ready` (printer physically ready) for the kiosk status.
+    // `available` just means the agent responded — it is always true.
+    // A printer with a paper jam has available=true but ready=false, so
+    // we must use ready to correctly mark the kiosk offline on errors.
     const printerOnline = printerHealth.ready || (printerHealth.online && !printerHealth.paperJam && !printerHealth.tonerEmpty && !printerHealth.doorOpen && !printerHealth.outputBinFull && !printerHealth.serviceRequested);
     Object.assign(kiosk, {
       status: printerOnline ? "online" : "offline",
@@ -3798,27 +3832,6 @@ const server = http.createServer(async (req, res) => {
       lastOnline: now
     });
     saveData();
-
-    // Log every health ping so PM2 logs show exactly what each kiosk is sending
-    const flags = [
-      printerHealth.paperJam      ? "PAPER_JAM"      : null,
-      !printerHealth.paper        ? "NO_PAPER"        : null,
-      printerHealth.paperLow      ? "PAPER_LOW"       : null,
-      printerHealth.doorOpen      ? "DOOR_OPEN"       : null,
-      printerHealth.tonerEmpty    ? "TONER_EMPTY"     : null,
-      printerHealth.tonerLow      ? "TONER_LOW"       : null,
-      printerHealth.outputBinFull ? "OUTPUT_BIN_FULL" : null,
-      printerHealth.serviceRequested ? "SERVICE_REQ"  : null,
-      printerHealth.queueError    ? "QUEUE_ERROR"     : null,
-    ].filter(Boolean);
-
-    console.log(
-      `[HEALTH] ${kioskId} | status=${printerOnline ? "ONLINE" : "OFFLINE"}` +
-      ` | ready=${printerHealth.ready} | online=${printerHealth.online}` +
-      ` | paper="${printerHealth.paperStatus}" | toner="${printerHealth.tonerStatus}"` +
-      ` | flags=[${flags.join(",")}]` +
-      (printerHealth.errorMessage ? ` | error="${printerHealth.errorMessage}"` : "")
-    );
 
     return json(res, 200, { ok: true, kiosk });
   }
@@ -4330,24 +4343,41 @@ const server = http.createServer(async (req, res) => {
   const adminSession = url.pathname.startsWith("/api/admin/") ? readAdminSession(req) : null;
 
   if (req.method === "GET" && url.pathname === "/api/admin/dashboard") {
-    const adminJobs = jobsForAdmin(adminSession);
     const adminKiosks = kiosksForAdmin(adminSession);
+    const allowedKiosks = new Set(adminKiosks.map(k => normalizeKioskCode(k.kioskId)));
+    const adminStats = db.dailyStats.filter(stat => allowedKiosks.has(stat.kioskId));
+    
     return json(res, 200, {
-      revenueToday: adminJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? job.amount : 0), 0),
-      jobsToday: adminJobs.length,
-      failedJobs: adminJobs.filter((job) => String(job.printStatus || "").includes("Failed")).length,
+      revenueToday: adminStats.reduce((sum, stat) => sum + stat.revenue, 0),
+      jobsToday: adminStats.reduce((sum, stat) => sum + stat.prints, 0),
+      failedJobs: 0,
       activeKiosks: adminKiosks.filter((kiosk) => kiosk.status === "online").length
     });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/revenue") {
-    const adminJobs = jobsForAdmin(adminSession);
-    const adminPayments = paymentsForJobs(adminJobs);
-    const adminRefunds = refundsForJobs(adminJobs, adminPayments);
     const adminServices = servicesForAdmin(adminSession);
-    const gross = adminJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
-    const refunds = adminRefunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
-    return json(res, 200, { gross, refunds, net: gross - refunds, pricing: pricingForServices(adminServices, [...kioskIdsForAdmin(adminSession)]), services: adminServices, config: db.config });
+    const adminKiosks = kiosksForAdmin(adminSession);
+    const allowedKiosks = new Set(adminKiosks.map(k => normalizeKioskCode(k.kioskId)));
+    const adminStats = db.dailyStats.filter(stat => allowedKiosks.has(stat.kioskId));
+    const gross = adminStats.reduce((sum, stat) => sum + stat.revenue, 0);
+    const refunds = 0;
+    
+    return json(res, 200, { 
+      gross, 
+      refunds, 
+      net: gross - refunds, 
+      pricing: pricingForServices(adminServices, [...kioskIdsForAdmin(adminSession)]), 
+      services: adminServices, 
+      config: db.config 
+    });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/admin/daily-stats") {
+    const adminKiosks = kiosksForAdmin(adminSession);
+    const allowedKiosks = new Set(adminKiosks.map(k => normalizeKioskCode(k.kioskId)));
+    const adminStats = db.dailyStats.filter(stat => allowedKiosks.has(stat.kioskId));
+    return json(res, 200, { dailyStats: adminStats });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/pricing") {
@@ -4362,16 +4392,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/transactions") {
-    return json(res, 200, { payments: paymentsForJobs(jobsForAdmin(adminSession)) });
+    return json(res, 200, { payments: [] });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/refunds") {
-    const adminJobs = jobsForAdmin(adminSession);
-    return json(res, 200, { refunds: refundsForJobs(adminJobs, paymentsForJobs(adminJobs)) });
+    return json(res, 200, { refunds: [] });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/print-history") {
-    return json(res, 200, { jobs: jobsForAdmin(adminSession) });
+    return json(res, 200, { jobs: [] });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/reports") {

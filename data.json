@@ -796,7 +796,19 @@
     }
   ],
   "refunds": [],
-  "releases": [],
+  "releases": [
+    {
+      "releaseId": "rel_1785426412045",
+      "version": "1.1.9",
+      "channel": "production",
+      "downloadUrl": "https://printingkiosk1.s3.ap-south-1.amazonaws.com/SmartPrintingKiosk-win-x64.zip",
+      "sizeBytes": 247925735,
+      "mandatory": true,
+      "active": true,
+      "notes": "UI updates, Offline fixes, and Admin improvements",
+      "publishedAt": "2026-07-30T15:46:52.045Z"
+    }
+  ],
   "config": {
     "version": 1785405249254,
     "updatedAt": "2026-07-30T09:54:09.254Z",

@@ -684,12 +684,54 @@
           "documentType": "image"
         }
       ]
+    },
+    {
+      "id": "service-18220",
+      "icon": "SV",
+      "title": "New Service",
+      "titleHi": "",
+      "titleMr": "",
+      "description": "Customer service.",
+      "descriptionHi": "",
+      "descriptionMr": "",
+      "defaultPages": 1,
+      "mode": "upload",
+      "imageUrl": "",
+      "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": [
+        "KIOSK-02"
+      ],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
+      "pricing": {
+        "bw": 2,
+        "color": 10
+      },
+      "templates": []
     }
   ],
   "pricing": {
     "govt-form": {
       "bw": 3,
       "color": 12
+    },
+    "service-18220": {
+      "bw": 2,
+      "color": 10
     }
   },
   "kiosks": [
@@ -747,7 +789,7 @@
         "default-project"
       ],
       "kioskIds": [],
-      "lastLoginAt": "2026-07-29T11:51:41.316Z",
+      "lastLoginAt": "2026-07-30T10:51:42.780Z",
       "logoUrl": "",
       "kioskTitle": "",
       "kioskSubtitle": ""
@@ -756,9 +798,9 @@
   "refunds": [],
   "releases": [],
   "config": {
-    "version": 1784453959135,
-    "updatedAt": "2026-07-19T09:39:19.135Z",
+    "version": 1785405249254,
+    "updatedAt": "2026-07-30T09:54:09.254Z",
     "reason": "kiosks-updated"
   },
-  "updatedAt": "2026-07-29T11:51:41.316Z"
+  "updatedAt": "2026-07-30T10:51:42.780Z"
 }

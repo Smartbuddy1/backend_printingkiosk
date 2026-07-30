@@ -661,8 +661,8 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
 
   return {
     jobs: Array.isArray(persistedData.jobs) ? persistedData.jobs : [],
-    dailyStats: Array.isArray(persistedData.dailyStats) ? persistedData.dailyStats : [],
     payments: Array.isArray(persistedData.payments) ? persistedData.payments : [],
+    alertLogs: Array.isArray(persistedData.alertLogs) ? persistedData.alertLogs : [],
     services,
     pricing: normalizePricing(persistedData.pricing || persistedSettings.pricing, services),
     kiosks,
@@ -722,7 +722,6 @@ function writeJsonAtomic(filePath, value) {
 function dataSnapshot() {
   return {
     jobs: db.jobs,
-    dailyStats: db.dailyStats,
     payments: db.payments,
     services: db.services,
     pricing: db.pricing,
@@ -1720,6 +1719,12 @@ function jobsForAdmin(session = {}) {
   const allowed = kioskIdsForAdmin(session);
   return db.jobs.filter((job) => allowed.has(normalizeKioskCode(job.kioskId)));
 }
+
+function alertLogsForAdmin(session = {}) {
+  const allowed = kioskIdsForAdmin(session);
+  return db.alertLogs.filter((log) => allowed.has(normalizeKioskCode(log.kioskId)));
+}
+
 
 function paymentsForJobs(jobs = []) {
   const jobIds = new Set(jobs.map((job) => String(job.jobId || "")));
@@ -2901,57 +2906,17 @@ function upsertPaymentJob(body) {
   return job;
 }
 
-function aggregateJobToDailyStats(job) {
-  if (job.aggregated) return;
-  
-  const date = new Date().toISOString().split("T")[0];
-  const kioskId = normalizeKioskCode(job.kioskId);
-  const templateId = String(job.templateId || "Unknown");
-  const isSuccess = /completed/i.test(job.printStatus);
-  const amount = isSuccess ? Number(job.amount || 0) : 0;
-  
-  let stat = db.dailyStats.find(s => s.date === date && s.kioskId === kioskId && s.templateId === templateId);
-  if (!stat) {
-    stat = { date, kioskId, templateId, prints: 0, revenue: 0, upiPayments: 0 };
-    db.dailyStats.push(stat);
-  }
-  
-  if (isSuccess) {
-    stat.prints += 1;
-    stat.revenue += amount;
-    if (String(job.paymentMethod || "UPI").toUpperCase().includes("UPI")) {
-      stat.upiPayments += 1;
-    }
-  }
-  
-  job.aggregated = true;
-}
-
-function cleanupJobs() {
-  const cutoff = Date.now() - 30 * 60 * 1000;
-  db.jobs = db.jobs.filter(job => {
-    if (!/completed|failed/i.test(job.printStatus || "")) return true;
-    const jobTime = new Date(job.completedAt || job.failedAt || job.createdAt || Date.now()).getTime();
-    return jobTime > cutoff;
-  });
-}
-
 function setJobPrintStatus(job, printStatus, extra = {}) {
   job.printStatus = printStatus || job.printStatus;
 
   if (/completed/i.test(job.printStatus)) {
-    job.completedAt = job.completedAt || new Date().toISOString();
-    aggregateJobToDailyStats(job);
+    job.completedAt = new Date().toISOString();
   }
 
   if (/failed/i.test(job.printStatus)) {
-    job.failedAt = job.failedAt || new Date().toISOString();
+    job.failedAt = new Date().toISOString();
     job.failureReason = extra.failureReason || job.failureReason || "Print failed";
-    aggregateJobToDailyStats(job);
   }
-
-  cleanupJobs();
-
 
   saveData();
   return job;
@@ -3393,7 +3358,7 @@ function saveSuperAdminCollection(collection) {
 }
 
 function superAdminSummary() {
-  const gross = db.dailyStats.reduce((sum, stat) => sum + stat.revenue, 0);
+  const gross = db.jobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
   const refunds = db.refunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
   const templates = db.services.reduce((sum, service) => sum + (service.templates?.length || 0), 0);
 
@@ -3403,13 +3368,13 @@ function superAdminSummary() {
     kiosks: db.kiosks.length,
     services: db.services.length,
     templates,
-    jobs: db.dailyStats.reduce((sum, stat) => sum + stat.prints, 0),
+    jobs: db.jobs.length,
     payments: db.payments.length,
     refunds: db.refunds.length,
     releases: db.releases.length,
     gross,
     net: gross - refunds,
-    failedJobs: 0,
+    failedJobs: db.jobs.filter((job) => /failed/i.test(job.printStatus || "")).length,
     activeKiosks: db.kiosks.filter((kiosk) => kiosk.status === "online").length
   };
 }
@@ -3422,22 +3387,36 @@ function buildSuperAdminHierarchy() {
       (admin.projectIds || []).includes(kiosk.projectId)
     )) || null;
     const kioskCode = normalizeKioskCode(kiosk.kioskId);
-    
-    const kioskStats = db.dailyStats.filter(stat => stat.kioskId === kioskCode);
-    const kioskServices = db.services.filter((service) => serviceAppliesToKiosk(service, kiosk, kiosk.kioskId));
+    const kioskJobs = db.jobs.filter((job) => normalizeKioskCode(job.kioskId) === kioskCode);
+    const jobIds = new Set(kioskJobs.map((job) => job.jobId));
+    const serviceIds = new Set(kioskJobs.map((job) => job.service));
+    const kioskServices = db.services
+      .filter((service) => serviceAppliesToKiosk(service, kiosk, kiosk.kioskId) || serviceIds.has(service.id))
+      .map((service) => {
+        const serviceJobs = kioskJobs.filter((job) => job.service === service.id);
+        const revenue = serviceJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
+
+        return {
+          ...service,
+          jobCount: serviceJobs.length,
+          revenue,
+          failedJobs: serviceJobs.filter((job) => /failed/i.test(job.printStatus || "")).length
+        };
+      });
 
     return {
-      kioskId: kioskCode,
-      name: kiosk.name,
-      status: kiosk.status,
-      project: project ? { projectId: project.projectId, name: project.name } : null,
-      admin: kioskAdmin ? { adminId: kioskAdmin.adminId, name: kioskAdmin.name, email: kioskAdmin.email } : null,
-      services: kioskServices.map((service) => ({ id: service.id, name: service.name })),
+      ...kiosk,
+      project,
+      admin: kioskAdmin ? publicKioskAdmin(kioskAdmin) : null,
+      services: kioskServices,
+      jobs: kioskJobs,
+      payments: db.payments.filter((payment) => jobIds.has(payment.jobId)),
+      refunds: db.refunds.filter((refund) => jobIds.has(refund.jobId)),
       totals: {
-        jobs: kioskStats.reduce((sum, stat) => sum + stat.prints, 0),
-        payments: 0,
-        revenue: kioskStats.reduce((sum, stat) => sum + stat.revenue, 0),
-        failedJobs: 0
+        jobs: kioskJobs.length,
+        payments: db.payments.filter((payment) => jobIds.has(payment.jobId)).length,
+        revenue: kioskJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0),
+        failedJobs: kioskJobs.filter((job) => /failed/i.test(job.printStatus || "")).length
       }
     };
   });
@@ -3448,8 +3427,7 @@ function superAdminSnapshot() {
     summary: superAdminSummary(),
     hierarchy: buildSuperAdminHierarchy(),
     data: {
-      dailyStats: db.dailyStats,
-      jobs: [],
+      jobs: db.jobs,
       payments: db.payments,
       services: db.services,
       pricing: db.pricing,
@@ -3806,6 +3784,54 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true, kiosk: validation.kiosk });
   }
 
+function kioskPrinterHealthAlerts(kiosk = {}) {
+  const printerHealth = kiosk.printerHealth && typeof kiosk.printerHealth === "object"
+    ? kiosk.printerHealth
+    : null;
+  if (!printerHealth) return [];
+
+  const kioskId = kiosk.kioskId || "Kiosk";
+  const printerName = printerHealth.printerName || kiosk.printer || "Printer";
+  const paperStatus = String(printerHealth.paperStatus || "").toLowerCase();
+  const tonerStatus = String(printerHealth.tonerStatus || "").toLowerCase();
+  const alerts = [];
+  const add = (category, title, detail, tone = "bad") => {
+    alerts.push({
+      title: `${kioskId} - ${title}`,
+      detail: `${printerName}: ${detail}`,
+      tone,
+      source: "printer",
+      category,
+      kioskId
+    });
+  };
+
+  const paperJam = Boolean(printerHealth.paperJam) || paperStatus.includes("jam");
+  const noPaper = printerHealth.paper === false || paperStatus.includes("no paper") || paperStatus.includes("out of paper") || paperStatus.includes("empty");
+  const paperLow = Boolean(printerHealth.paperLow) || paperStatus.includes("low");
+  const doorOpen = Boolean(printerHealth.doorOpen) || paperStatus.includes("door");
+  const tonerEmpty = Boolean(printerHealth.tonerEmpty) || tonerStatus.includes("no toner") || tonerStatus.includes("empty") || tonerStatus.includes("replace");
+  const tonerLow = Boolean(printerHealth.tonerLow) || tonerStatus.includes("low");
+  const queueError = Boolean(printerHealth.queueError);
+
+  if (paperJam) add("paper", "Paper jam detected", "clear the paper jam and close all trays");
+  else if (noPaper) add("paper", "Paper empty", "load paper in the tray");
+  else if (paperLow) add("paper", "Paper low", "refill paper soon", "warn");
+
+  if (doorOpen) add("paper", "Printer door open", "close the printer door or tray");
+  if (tonerEmpty) add("toner", "Toner empty", "replace the toner cartridge");
+  else if (tonerLow) add("toner", "Toner low", "keep a replacement toner ready", "warn");
+  if (printerHealth.outputBinFull) add("paper", "Output tray full", "remove printed pages from the output tray");
+  if (printerHealth.serviceRequested) add("service", "Printer service required", printerHealth.errorMessage || "service intervention required");
+  if (queueError) add("queue", "Print queue blocked", printerHealth.errorMessage || "clear the Windows print queue");
+
+  if (alerts.length === 0 && printerHealth.status === "offline" && printerHealth.errorMessage) {
+    add("queue", "Printer Offline", printerHealth.errorMessage);
+  }
+
+  return alerts;
+}
+
   if (req.method === "GET" && url.pathname === "/api/kiosk/config") {
     return json(res, 200, kioskConfigResponse(url.searchParams.get("kioskId") || ""));
   }
@@ -3822,6 +3848,8 @@ const server = http.createServer(async (req, res) => {
     // A printer with a paper jam has available=true but ready=false, so
     // we must use ready to correctly mark the kiosk offline on errors.
     const printerOnline = printerHealth.ready || (printerHealth.online && !printerHealth.paperJam && !printerHealth.tonerEmpty && !printerHealth.doorOpen && !printerHealth.outputBinFull && !printerHealth.serviceRequested);
+    const oldAlerts = kioskPrinterHealthAlerts(kiosk);
+
     Object.assign(kiosk, {
       status: printerOnline ? "online" : "offline",
       printerErrorMessage: printerOnline ? null : (printerHealth.errorMessage || null),
@@ -3830,6 +3858,34 @@ const server = http.createServer(async (req, res) => {
       scanner: String(body.scannerStatus || kiosk.scanner || "unknown").trim(),
       lastOnline: now
     });
+
+    const newAlerts = kioskPrinterHealthAlerts(kiosk);
+
+    newAlerts.forEach(na => {
+      const existingActive = db.alertLogs.find(a => a.kioskId === kiosk.kioskId && a.title === na.title && a.status === 'active');
+      if (!existingActive) {
+         db.alertLogs.push({
+           id: "ALT-" + Date.now() + "-" + Math.floor(Math.random()*1000),
+           kioskId: kiosk.kioskId,
+           category: na.category,
+           title: na.title,
+           detail: na.detail,
+           tone: na.tone,
+           status: 'active',
+           createdAt: now,
+           resolvedAt: null
+         });
+      }
+    });
+
+    db.alertLogs.filter(a => a.kioskId === kiosk.kioskId && a.status === 'active').forEach(activeAlert => {
+       const stillActive = newAlerts.find(na => na.title === activeAlert.title);
+       if (!stillActive) {
+          activeAlert.status = 'resolved';
+          activeAlert.resolvedAt = now;
+       }
+    });
+
     saveData();
 
     return json(res, 200, { ok: true, kiosk });
@@ -4342,41 +4398,24 @@ const server = http.createServer(async (req, res) => {
   const adminSession = url.pathname.startsWith("/api/admin/") ? readAdminSession(req) : null;
 
   if (req.method === "GET" && url.pathname === "/api/admin/dashboard") {
+    const adminJobs = jobsForAdmin(adminSession);
     const adminKiosks = kiosksForAdmin(adminSession);
-    const allowedKiosks = new Set(adminKiosks.map(k => normalizeKioskCode(k.kioskId)));
-    const adminStats = db.dailyStats.filter(stat => allowedKiosks.has(stat.kioskId));
-    
     return json(res, 200, {
-      revenueToday: adminStats.reduce((sum, stat) => sum + stat.revenue, 0),
-      jobsToday: adminStats.reduce((sum, stat) => sum + stat.prints, 0),
-      failedJobs: 0,
+      revenueToday: adminJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? job.amount : 0), 0),
+      jobsToday: adminJobs.length,
+      failedJobs: adminJobs.filter((job) => String(job.printStatus || "").includes("Failed")).length,
       activeKiosks: adminKiosks.filter((kiosk) => kiosk.status === "online").length
     });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/revenue") {
+    const adminJobs = jobsForAdmin(adminSession);
+    const adminPayments = paymentsForJobs(adminJobs);
+    const adminRefunds = refundsForJobs(adminJobs, adminPayments);
     const adminServices = servicesForAdmin(adminSession);
-    const adminKiosks = kiosksForAdmin(adminSession);
-    const allowedKiosks = new Set(adminKiosks.map(k => normalizeKioskCode(k.kioskId)));
-    const adminStats = db.dailyStats.filter(stat => allowedKiosks.has(stat.kioskId));
-    const gross = adminStats.reduce((sum, stat) => sum + stat.revenue, 0);
-    const refunds = 0;
-    
-    return json(res, 200, { 
-      gross, 
-      refunds, 
-      net: gross - refunds, 
-      pricing: pricingForServices(adminServices, [...kioskIdsForAdmin(adminSession)]), 
-      services: adminServices, 
-      config: db.config 
-    });
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/admin/daily-stats") {
-    const adminKiosks = kiosksForAdmin(adminSession);
-    const allowedKiosks = new Set(adminKiosks.map(k => normalizeKioskCode(k.kioskId)));
-    const adminStats = db.dailyStats.filter(stat => allowedKiosks.has(stat.kioskId));
-    return json(res, 200, { dailyStats: adminStats });
+    const gross = adminJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
+    const refunds = adminRefunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
+    return json(res, 200, { gross, refunds, net: gross - refunds, pricing: pricingForServices(adminServices, [...kioskIdsForAdmin(adminSession)]), services: adminServices, config: db.config });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/pricing") {
@@ -4391,15 +4430,16 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/transactions") {
-    return json(res, 200, { payments: [] });
+    return json(res, 200, { payments: paymentsForJobs(jobsForAdmin(adminSession)) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/refunds") {
-    return json(res, 200, { refunds: [] });
+    const adminJobs = jobsForAdmin(adminSession);
+    return json(res, 200, { refunds: refundsForJobs(adminJobs, paymentsForJobs(adminJobs)) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/print-history") {
-    return json(res, 200, { jobs: [] });
+    return json(res, 200, { jobs: jobsForAdmin(adminSession) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/reports") {
@@ -4622,6 +4662,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/admin/system-status") {
     return json(res, 200, {
       kiosks: kiosksForAdmin(adminSession),
+      alertLogs: alertLogsForAdmin(adminSession),
       backend: "online",
       localAgentExpectedPort: 5077
     });

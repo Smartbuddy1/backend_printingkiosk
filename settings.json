@@ -139,18 +139,60 @@
           "documentType": "image"
         }
       ]
+    },
+    {
+      "id": "service-18220",
+      "icon": "SV",
+      "title": "New Service",
+      "titleHi": "",
+      "titleMr": "",
+      "description": "Customer service.",
+      "descriptionHi": "",
+      "descriptionMr": "",
+      "defaultPages": 1,
+      "mode": "upload",
+      "imageUrl": "",
+      "enabled": true,
+      "projectIds": [
+        "default-project"
+      ],
+      "kioskIds": [
+        "KIOSK-02"
+      ],
+      "customerSettings": {
+        "bw": true,
+        "color": true,
+        "copies": true
+      },
+      "printDefaults": {
+        "colorMode": "bw",
+        "copies": 1,
+        "paperSize": "A4",
+        "sides": "single",
+        "orientation": "portrait",
+        "range": "all"
+      },
+      "pricing": {
+        "bw": 2,
+        "color": 10
+      },
+      "templates": []
     }
   ],
   "pricing": {
     "govt-form": {
       "bw": 3,
       "color": 12
+    },
+    "service-18220": {
+      "bw": 2,
+      "color": 10
     }
   },
   "config": {
-    "version": 1784282505128,
-    "updatedAt": "2026-07-17T10:01:45.128Z",
-    "reason": "pricing-updated"
+    "version": 1785398626250,
+    "updatedAt": "2026-07-30T08:03:46.250Z",
+    "reason": "services-updated"
   },
-  "updatedAt": "2026-07-17T10:01:45.128Z"
+  "updatedAt": "2026-07-30T08:03:46.250Z"
 }

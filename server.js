@@ -731,6 +731,7 @@ function dataSnapshot() {
     refunds: db.refunds,
     releases: db.releases,
     config: db.config,
+    alertLogs: db.alertLogs,
     updatedAt: new Date().toISOString()
   };
 }

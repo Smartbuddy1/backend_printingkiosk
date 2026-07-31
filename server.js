@@ -2470,7 +2470,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#1769f5" />
         <title>${escapeHtml(title)} | Print Kiosk</title>
-        <link rel="icon" type="image/png" href="/assets/printhub-mark.png" />
+        <link rel="icon" type="image/png" href="/assets/aarya-innovtech-logo.png" />
         <style>
           :root{--blue:#1769f5;--blue-dark:#0d47ae;--ink:#14213d;--muted:#64748b;--line:#dbe4ef;--soft:#f3f7fd;--green:#15a669;--red:#c2413b;}
           *{box-sizing:border-box;}
@@ -2526,7 +2526,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
       <body>
         <main class="page">
           <div class="shell">
-            <a class="brand" href="#" aria-label="Print Kiosk"><img src="/assets/printhub-logo.png" alt="Print Kiosk" /></a>
+            <a class="brand" href="#" aria-label="Print Kiosk"><img src="/assets/aarya-innovtech-logo.png" alt="Print Kiosk" /></a>
             <section class="card">
               <header class="card-head">
                 <span class="eyebrow">${escapeHtml(eyebrow)}</span>

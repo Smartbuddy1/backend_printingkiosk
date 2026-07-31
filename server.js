@@ -3731,7 +3731,6 @@ const server = http.createServer(async (req, res) => {
     const checkedAt = isoNow();
 
     Object.assign(validation.kiosk, {
-      status: "online",
       appVersion: currentVersion || validation.kiosk.appVersion,
       updateChannel: String(requestedChannel).toLowerCase() === "staging" ? "staging" : "production",
       updateStatus: release ? "available" : "current",
@@ -3763,7 +3762,6 @@ const server = http.createServer(async (req, res) => {
     const now = isoNow();
     const currentVersion = normalizeReleaseVersion(body.currentVersion || validation.kiosk.appVersion || "0.0.0");
     Object.assign(validation.kiosk, {
-      status: "online",
       appVersion: currentVersion || validation.kiosk.appVersion,
       updateChannel: String(body.channel || validation.kiosk.updateChannel || "production").toLowerCase() === "staging" ? "staging" : "production",
       updateStatus: status,
@@ -3825,7 +3823,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   if (printerHealth.serviceRequested) add("service", "Printer service required", printerHealth.errorMessage || "service intervention required");
   if (queueError) add("queue", "Print queue blocked", printerHealth.errorMessage || "clear the Windows print queue");
 
-  if (alerts.length === 0 && printerHealth.status === "offline" && printerHealth.errorMessage) {
+  if (alerts.length === 0 && printerHealth.offline && printerHealth.errorMessage) {
     add("queue", "Printer Offline", printerHealth.errorMessage);
   }
 

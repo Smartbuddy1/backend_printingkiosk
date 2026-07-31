@@ -4768,6 +4768,40 @@ async function startServer() {
   db = createRuntimeDb(loadData(), loadSettings());
   await initializePersistence();
 
+  setInterval(() => {
+    let changed = false;
+    const now = Date.now();
+    const iso = new Date(now).toISOString();
+
+    db.kiosks.forEach(kiosk => {
+      if (kiosk.status === "online") {
+        const last = new Date(kiosk.lastOnline).getTime();
+        // 3 minutes without heartbeat = offline
+        if (isNaN(last) || (now - last > 180000)) {
+          kiosk.status = "offline";
+          changed = true;
+
+          // Generate alert
+          const existingActive = db.alertLogs.find(a => a.kioskId === kiosk.kioskId && a.title.includes("Kiosk Offline") && a.status === 'active');
+          if (!existingActive) {
+            db.alertLogs.push({
+              id: "ALT-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
+              kioskId: kiosk.kioskId,
+              category: "network",
+              title: `${kiosk.kioskId || "Kiosk"} - Kiosk Offline`,
+              detail: `The kiosk PC has lost internet connection or is turned off.`,
+              tone: "bad",
+              status: 'active',
+              createdAt: iso,
+              resolvedAt: null
+            });
+          }
+        }
+      }
+    });
+    if (changed) saveData();
+  }, 60000); // Check every minute
+
   server.listen(PORT, HOST || undefined, () => {
     const hostLabel = HOST || "localhost";
     console.log(`Printing kiosk backend running at http://${hostLabel}:${PORT}`);

@@ -4768,7 +4768,7 @@ async function startServer() {
   db = createRuntimeDb(loadData(), loadSettings());
   await initializePersistence();
 
-  setInterval(() => {
+  const checkKioskTimeouts = () => {
     let changed = false;
     const now = Date.now();
     const iso = new Date(now).toISOString();
@@ -4800,7 +4800,10 @@ async function startServer() {
       }
     });
     if (changed) saveData();
-  }, 60000); // Check every minute
+  };
+
+  checkKioskTimeouts();
+  setInterval(checkKioskTimeouts, 60000); // Check every minute
 
   server.listen(PORT, HOST || undefined, () => {
     const hostLabel = HOST || "localhost";

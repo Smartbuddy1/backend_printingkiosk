@@ -3436,7 +3436,8 @@ function superAdminSnapshot() {
       kioskAdmins: db.kioskAdmins.map(publicKioskAdmin),
       refunds: db.refunds,
       releases: db.releases,
-      config: db.config
+      config: db.config,
+      alertLogs: db.alertLogs
     },
     config: db.config,
     updatedAt: isoNow()

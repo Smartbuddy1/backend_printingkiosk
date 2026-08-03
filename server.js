@@ -3383,6 +3383,10 @@ function saveSuperAdminCollection(collection) {
     if (collection === "services" || collection === "pricing") {
       saveSettings();
     }
+  } else if (collection === "admins") {
+    // Bump config version when client brand/logo/name changes so kiosks refresh in real time.
+    touchConfig("brand-updated");
+    saveSettings();
   }
 
   saveData();

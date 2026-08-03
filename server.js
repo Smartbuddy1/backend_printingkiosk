@@ -3196,11 +3196,38 @@ function normalizeSuperAdminKiosk(record = {}, existing = {}) {
 
 function normalizeKioskPrinterHealth(record = {}) {
   const source = record && typeof record === "object" ? record : {};
+  const snmpSource = source.snmp && typeof source.snmp === "object" ? source.snmp : null;
+  const snmp = snmpSource ? {
+    enabled: Boolean(snmpSource.enabled),
+    host: String(snmpSource.host || "").trim().slice(0, 160),
+    configured: Boolean(snmpSource.configured),
+    autoDetected: Boolean(snmpSource.autoDetected),
+    autoDetect: Boolean(snmpSource.autoDetect),
+    required: Boolean(snmpSource.required),
+    ok: Boolean(snmpSource.ok),
+    ready: Boolean(snmpSource.ready),
+    offline: Boolean(snmpSource.offline),
+    paperJam: Boolean(snmpSource.paperJam),
+    noPaper: Boolean(snmpSource.noPaper),
+    paperLow: Boolean(snmpSource.paperLow),
+    doorOpen: Boolean(snmpSource.doorOpen),
+    tonerEmpty: Boolean(snmpSource.tonerEmpty),
+    tonerLow: Boolean(snmpSource.tonerLow),
+    outputBinFull: Boolean(snmpSource.outputBinFull),
+    serviceRequested: Boolean(snmpSource.serviceRequested),
+    paperStatus: String(snmpSource.paperStatus || "").trim().slice(0, 80),
+    tonerStatus: String(snmpSource.tonerStatus || "").trim().slice(0, 80),
+    printerStatus: Number(snmpSource.printerStatus || 0),
+    errorMessage: String(snmpSource.errorMessage || "").trim().slice(0, 500),
+    lastCheckedAt: snmpSource.lastCheckedAt || null
+  } : null;
+
   return {
     available: source.available !== false,
     online: Boolean(source.online),
     ready: Boolean(source.ready),
     busy: Boolean(source.busy),
+    checking: Boolean(source.checking),
     paper: source.paper !== false,
     paperLow: Boolean(source.paperLow),
     paperJam: Boolean(source.paperJam),
@@ -3220,6 +3247,9 @@ function normalizeKioskPrinterHealth(record = {}) {
     detectedErrorState: Number(source.detectedErrorState || 0),
     detectedErrorText: String(source.detectedErrorText || "Unknown").trim().slice(0, 80),
     printerStatus: Number(source.printerStatus || 0),
+    observedStatus: String(source.observedStatus || "").trim().slice(0, 40),
+    observedErrorMessage: String(source.observedErrorMessage || "").trim().slice(0, 500),
+    snmp,
     lastUpdated: source.lastUpdated || isoNow()
   };
 }
@@ -3825,7 +3855,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   if (printerHealth.serviceRequested) add("service", "Printer service required", printerHealth.errorMessage || "service intervention required");
   if (queueError) add("queue", "Print queue blocked", printerHealth.errorMessage || "clear the Windows print queue");
 
-  if (alerts.length === 0 && printerHealth.offline && printerHealth.errorMessage) {
+  if (alerts.length === 0 && !printerHealth.online && printerHealth.errorMessage) {
     add("queue", "Printer Offline", printerHealth.errorMessage);
   }
 
@@ -3847,7 +3877,17 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     // `available` just means the agent responded — it is always true.
     // A printer with a paper jam has available=true but ready=false, so
     // we must use ready to correctly mark the kiosk offline on errors.
-    const printerOnline = printerHealth.ready || (printerHealth.online && !printerHealth.paperJam && !printerHealth.tonerEmpty && !printerHealth.doorOpen && !printerHealth.outputBinFull && !printerHealth.serviceRequested);
+    const printerOnline = printerHealth.ready || (
+      printerHealth.online &&
+      printerHealth.paper !== false &&
+      !printerHealth.paperJam &&
+      !printerHealth.tonerEmpty &&
+      !printerHealth.doorOpen &&
+      !printerHealth.outputBinFull &&
+      !printerHealth.serviceRequested &&
+      !printerHealth.queueError &&
+      !printerHealth.checking
+    );
     const oldAlerts = kioskPrinterHealthAlerts(kiosk);
 
     Object.assign(kiosk, {

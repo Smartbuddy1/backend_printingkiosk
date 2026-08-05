@@ -3904,10 +3904,10 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
 
     const printerHealth = normalizeKioskPrinterHealth(body.printerHealth || body.printer || {});
     const now = isoNow();
-    // Use `ready` (printer physically ready) for the kiosk status.
+    // Use `ready` (printer physically ready) for printer readiness.
     // `available` just means the agent responded — it is always true.
     // A printer with a paper jam has available=true but ready=false, so
-    // we must use ready to correctly mark the kiosk offline on errors.
+    // we must use ready to correctly flag printer hardware errors.
     const printerOnline = printerHealth.ready || (
       printerHealth.online &&
       printerHealth.paper !== false &&
@@ -3919,10 +3919,16 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       !printerHealth.queueError &&
       !printerHealth.checking
     );
-    const oldAlerts = kioskPrinterHealthAlerts(kiosk);
 
+    // This request reaching the backend is itself proof the kiosk PC is online —
+    // do not let a printer hardware issue (door open, paper jam, ...) mark the
+    // whole kiosk "offline". That collapsed real printer errors into a generic
+    // "Kiosk Offline" alert on the admin dashboard instead of the actual issue.
+    // Kiosk network status is only ever set offline by the heartbeat timeout
+    // sweep (checkKioskTimeouts) when this endpoint stops being called.
     Object.assign(kiosk, {
-      status: printerOnline ? "online" : "offline",
+      status: "online",
+      printerReady: printerOnline,
       printerErrorMessage: printerOnline ? null : (printerHealth.errorMessage || null),
       printer: printerHealth.printerName || kiosk.printer || "unknown",
       printerHealth,
@@ -4853,22 +4859,29 @@ async function startServer() {
         if (isNaN(last) || (now - last > 180000)) {
           kiosk.status = "offline";
           changed = true;
+        }
+      }
 
-          // Generate alert
-          const existingActive = db.alertLogs.find(a => a.kioskId === kiosk.kioskId && a.title.includes("Kiosk Offline") && a.status === 'active');
-          if (!existingActive) {
-            db.alertLogs.push({
-              id: "ALT-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
-              kioskId: kiosk.kioskId,
-              category: "network",
-              title: `${kiosk.kioskId || "Kiosk"} - Kiosk Offline`,
-              detail: `The kiosk PC has lost internet connection or is turned off.`,
-              tone: "bad",
-              status: 'active',
-              createdAt: iso,
-              resolvedAt: null
-            });
-          }
+      // Ensure every currently-offline kiosk has an active alert log entry, not
+      // just the ones caught transitioning above. Without this, a kiosk that was
+      // already offline before a server restart (in-memory alertLogs reset) stays
+      // offline forever without ever getting logged, even though the live "Open
+      // Alerts" view (computed straight from kiosk.status) keeps reporting it.
+      if (kiosk.status === "offline") {
+        const existingActive = db.alertLogs.find(a => a.kioskId === kiosk.kioskId && a.title.includes("Kiosk Offline") && a.status === 'active');
+        if (!existingActive) {
+          db.alertLogs.push({
+            id: "ALT-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
+            kioskId: kiosk.kioskId,
+            category: "network",
+            title: `${kiosk.kioskId || "Kiosk"} - Kiosk Offline`,
+            detail: `The kiosk PC has lost internet connection or is turned off.`,
+            tone: "bad",
+            status: 'active',
+            createdAt: iso,
+            resolvedAt: null
+          });
+          changed = true;
         }
       }
     });

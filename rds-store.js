@@ -136,6 +136,23 @@ async function replaceCollection(client, collection, records = []) {
   }
 }
 
+async function upsertCollection(client, collection, records = []) {
+  const meta = collections[collection];
+
+  for (const record of records) {
+    const id = String(record?.[meta.keyField] || "").trim();
+    if (!id) continue;
+
+    await client.query(
+      `INSERT INTO ${meta.table} (${meta.keyColumn}, data, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (${meta.keyColumn})
+       DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [id, JSON.stringify(record)]
+    );
+  }
+}
+
 async function saveSetting(client, key, data) {
   await client.query(
     `INSERT INTO app_settings (key, data, updated_at)
@@ -156,7 +173,12 @@ async function saveSnapshot(snapshot) {
     await replaceCollection(client, "services", snapshot.services);
     await replaceCollection(client, "kiosks", snapshot.kiosks);
     await replaceCollection(client, "refunds", snapshot.refunds);
-    await replaceCollection(client, "alertLogs", snapshot.alertLogs);
+    // Alert history is append/update-only (rows are never removed, only marked
+    // resolved) - upsert here instead of the destructive delete-then-reinsert
+    // replaceCollection uses elsewhere. That way a save from a process with a
+    // stale/partial in-memory alert list (e.g. a second server instance) can
+    // never wipe out alert rows it simply doesn't know about yet.
+    await upsertCollection(client, "alertLogs", snapshot.alertLogs);
     await saveSetting(client, "kioskAdmins", snapshot.kioskAdmins || []);
     await saveSetting(client, "projects", snapshot.projects || []);
     await saveSetting(client, "releases", snapshot.releases || []);

@@ -818,15 +818,14 @@ function serviceAppliesToKiosk(service = {}, kiosk = null, kioskId = "") {
   const projectIds = Array.isArray(service.projectIds) ? service.projectIds.map((item) => slug(item, "")).filter(Boolean) : [];
   const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((item) => normalizeKioskCode(item)).filter(Boolean) : [];
 
-  if (kioskIds.length) {
-    return Boolean(id && kioskIds.includes(id));
+  if (kioskIds.length === 0 && projectIds.length === 0) {
+    return true;
   }
 
-  if (projectIds.length) {
-    return Boolean(projectId && projectIds.includes(projectId));
-  }
+  const matchesKiosk = kioskIds.length > 0 && Boolean(id && kioskIds.includes(id));
+  const matchesProject = projectIds.length > 0 && Boolean(projectId && projectIds.includes(projectId));
 
-  return true;
+  return matchesKiosk || matchesProject;
 }
 
 function servicesForKiosk(kioskId = "") {
@@ -1205,6 +1204,30 @@ function publicFrontendOrigin(req) {
 
 function uploadBaseUrl(req, session = null) {
   return (session?.publicBaseUrl || publicOrigin(req)).replace(/\/+$/, "");
+}
+
+// Server-rendered pages (mobile upload, etc.) have no request context tying them
+// to a frontend origin, and in production the backend (this API host) does not
+// serve /assets/* itself — the frontend is hosted separately (e.g. Vercel). Point
+// asset URLs there when configured; otherwise fall back to a relative path for
+// setups where the backend does serve the frontend directly (local/mini-pc).
+function frontendAssetOrigin() {
+  const configuredUrl = (
+    process.env.PUBLIC_FRONTEND_URL ||
+    process.env.FRONTEND_PUBLIC_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.KIOSK_URL ||
+    ""
+  ).replace(/\/+$/, "");
+
+  if (!configuredUrl) return "";
+
+  try {
+    const url = new URL(configuredUrl);
+    return /^https?:$/.test(url.protocol) ? configuredUrl : "";
+  } catch {
+    return "";
+  }
 }
 
 function imageContentType(filename) {
@@ -1656,7 +1679,7 @@ function projectIdsForAdmin(session = {}) {
   const account = findKioskAdminById(session.adminId);
   if (!account || account.status === "disabled") return new Set();
   return new Set([
-    ...(account.projectIds || []).map((id) => slug(id, "")),
+    ...(account.projectIds || []).map((id) => String(id || "").trim()),
     ...db.projects.filter((project) => project.adminId === account.adminId).map((project) => project.projectId)
   ].filter(Boolean));
 }
@@ -1808,7 +1831,7 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
   const normalizedIncoming = normalizeServices(incomingServices)
     .map((service) => {
       const existing = db.services.find((item) => item.id === service.id) || {};
-      const requestedProjects = Array.isArray(service.projectIds) ? service.projectIds.map((id) => slug(id, "")).filter(Boolean) : [];
+      const requestedProjects = Array.isArray(service.projectIds) ? service.projectIds.map((id) => String(id || "").trim()).filter(Boolean) : [];
       const scopedProjectIds = requestedProjects.length
         ? requestedProjects.filter((id) => allowedProjectIds.has(id))
         : (Array.isArray(existing.projectIds) && existing.projectIds.length
@@ -1826,7 +1849,7 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
       };
     })
     .filter((service) => {
-      if (service.projectIds?.length) return service.projectIds.some((id) => allowedProjectIds.has(slug(id, "")));
+      if (service.projectIds?.length) return service.projectIds.some((id) => allowedProjectIds.has(String(id || "").trim()));
       if (!allowedExistingIds.has(service.id)) return true;
       if (!service.kioskIds.length) return true;
       return service.kioskIds.some((id) => allowedKioskIds.has(normalizeKioskCode(id)));
@@ -2462,6 +2485,7 @@ function parseMultipartFiles(buffer, contentType) {
 }
 
 function renderMobileUploadShell({ title, eyebrow, heading, description, content, script = "" }) {
+  const logoUrl = `${frontendAssetOrigin()}/assets/aarya-innovtech-logo.png`;
   return `
     <!doctype html>
     <html lang="en">
@@ -2470,7 +2494,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#1769f5" />
         <title>${escapeHtml(title)} | Print Kiosk</title>
-        <link rel="icon" type="image/png" href="/assets/aarya-innovtech-logo.png" />
+        <link rel="icon" type="image/png" href="${logoUrl}" />
         <style>
           :root{--blue:#1769f5;--blue-dark:#0d47ae;--ink:#14213d;--muted:#64748b;--line:#dbe4ef;--soft:#f3f7fd;--green:#15a669;--red:#c2413b;}
           *{box-sizing:border-box;}
@@ -2526,7 +2550,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
       <body>
         <main class="page">
           <div class="shell">
-            <a class="brand" href="#" aria-label="Print Kiosk"><img src="/assets/aarya-innovtech-logo.png" alt="Print Kiosk" /></a>
+            <a class="brand" href="#" aria-label="Print Kiosk"><img src="${logoUrl}" alt="Print Kiosk" /></a>
             <section class="card">
               <header class="card-head">
                 <span class="eyebrow">${escapeHtml(eyebrow)}</span>
@@ -3063,15 +3087,18 @@ function validateKioskDevice(input = {}) {
 }
 
 function releaseRolloutIncludesKiosk(release, kioskId) {
-  if (release.targetKioskIds.length) return release.targetKioskIds.includes(kioskId);
-  if (release.rolloutPercentage >= 100) return true;
-  if (release.rolloutPercentage <= 0) return false;
+  const targetKioskIds = Array.isArray(release.targetKioskIds) ? release.targetKioskIds : [];
+  if (targetKioskIds.length) return targetKioskIds.includes(kioskId);
+
+  const rolloutPercentage = Number.isFinite(release.rolloutPercentage) ? release.rolloutPercentage : 100;
+  if (rolloutPercentage >= 100) return true;
+  if (rolloutPercentage <= 0) return false;
 
   const bucket = Number.parseInt(
     crypto.createHash("sha256").update(`${release.releaseId}:${kioskId}`).digest("hex").slice(0, 8),
     16
   ) % 10000;
-  return bucket < Math.round(release.rolloutPercentage * 100);
+  return bucket < Math.round(rolloutPercentage * 100);
 }
 
 function releaseForKiosk(kiosk, currentVersion, requestedChannel = "") {

@@ -799,14 +799,22 @@
   "releases": [
     {
       "releaseId": "rel_1785426412045",
-      "version": "1.1.9",
+      "version": "1.1.8",
       "channel": "production",
       "downloadUrl": "https://printingkiosk1.s3.ap-south-1.amazonaws.com/SmartPrintingKiosk-win-x64.zip",
-      "sizeBytes": 247925735,
+      "sha256": "95fe0cfec94e6a4e2ddee472faee653ad1f35f0ff4c6efb56ecaaf5a0af1370a",
+      "signature": "S2Mrf3qNv72RBNZPiQ+rK79YOAfBuKPBd1wAwy6Hl6l7EufVL7aZDoNSGPGCxVuW/eACbYwdZGg7ZARsF3hpb9tR4bAoPPSKeJCflBnRQDMoCGqmsZeOFVq72p74OjxoRq+Z71oX5iNYuMYYrBGQAsw62gs03DnX8hiK0Is0boQiJO51BYY4vbQ32VMznxfiTX9Q4ERWrrUOaIY7IK3l7/a+l6LKiQo03dG3R0eX/JkSV6O4i6MJNAQSnKG19y0+S3n/UFOguw4QINF6GXGHSh6toBEbkIxXkbB5qTf4UNWBapjNgsHIaSFKmksC+ECrI6tHNQUOfEfbL88QmWZuYGY0fakubAcSstE0+g1n4XGslDBC0KSmMMyAV+EhV2p3ztUC7+bS5U1X5+N8qVcNQp95LpKJ9wmWTxsnyiHy8nM3Mmd1Wdz7wB9O1uc8HXE4CmabzTPWZHvj/ano02CnbXbAI1pDXfPCixQU3nvRQY9pfAFidXsNa2vWOeHDIu+Z",
+      "signatureAlgorithm": "RSA-SHA256",
+      "signingKeyId": "primary",
+      "sizeBytes": 378754355,
+      "rolloutPercentage": 100,
+      "targetKioskIds": [],
       "mandatory": true,
       "active": true,
       "notes": "UI updates, Offline fixes, and Admin improvements",
-      "publishedAt": "2026-07-30T15:46:52.045Z"
+      "publishedAt": "2026-07-30T15:46:52.045Z",
+      "createdAt": "2026-07-30T15:46:52.045Z",
+      "updatedAt": "2026-08-05T04:23:40.000Z"
     }
   ],
   "config": {

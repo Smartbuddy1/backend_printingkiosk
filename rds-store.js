@@ -10,7 +10,8 @@ const collections = {
   payments: { table: "kiosk_payments", keyColumn: "payment_id", keyField: "paymentId" },
   services: { table: "kiosk_services", keyColumn: "service_id", keyField: "id" },
   kiosks: { table: "kiosks", keyColumn: "kiosk_id", keyField: "kioskId" },
-  refunds: { table: "kiosk_refunds", keyColumn: "refund_id", keyField: "refundId" }
+  refunds: { table: "kiosk_refunds", keyColumn: "refund_id", keyField: "refundId" },
+  alertLogs: { table: "kiosk_alerts", keyColumn: "alert_id", keyField: "id" }
 };
 
 function enabled() {
@@ -69,6 +70,12 @@ async function initDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS kiosk_alerts (
+      alert_id TEXT PRIMARY KEY,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       data JSONB NOT NULL,
@@ -102,6 +109,7 @@ async function loadSnapshot() {
     services: await loadCollection(client, "services"),
     kiosks: await loadCollection(client, "kiosks"),
     refunds: await loadCollection(client, "refunds"),
+    alertLogs: await loadCollection(client, "alertLogs"),
     kioskAdmins: await loadSetting(client, "kioskAdmins", []),
     projects: await loadSetting(client, "projects", []),
     releases: await loadSetting(client, "releases", []),
@@ -148,6 +156,7 @@ async function saveSnapshot(snapshot) {
     await replaceCollection(client, "services", snapshot.services);
     await replaceCollection(client, "kiosks", snapshot.kiosks);
     await replaceCollection(client, "refunds", snapshot.refunds);
+    await replaceCollection(client, "alertLogs", snapshot.alertLogs);
     await saveSetting(client, "kioskAdmins", snapshot.kioskAdmins || []);
     await saveSetting(client, "projects", snapshot.projects || []);
     await saveSetting(client, "releases", snapshot.releases || []);

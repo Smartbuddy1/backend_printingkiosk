@@ -22,6 +22,8 @@ const FRONTEND_ASSET_DIR = path.join(FRONTEND_DIR, "assets");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 const SERVICE_IMAGE_DIR = path.join(UPLOADS_DIR, "service-images");
 const CLIENT_LOGO_DIR = path.join(UPLOADS_DIR, "client-logos");
+const IDLE_IMAGE_DIR = path.join(UPLOADS_DIR, "idle-images");
+const IDLE_VIDEO_DIR = path.join(UPLOADS_DIR, "idle-videos");
 const MAX_FILES_PER_JOB = 10;
 const CUSTOMER_UPLOAD_EXTENSIONS = new Set(["PDF", "JPG", "JPEG", "PNG"]);
 const KIOSK_PRINTER_STALE_MS = 10 * 60 * 1000;
@@ -560,6 +562,10 @@ function normalizeKioskAdmin(record = {}, existing = {}) {
     logoUrl: normalizePublicAssetUrl(next.logoUrl || next.logo || next.clientLogoUrl || ""),
     kioskTitle: String(next.kioskTitle || next.headingTitle || "").trim().slice(0, 120),
     kioskSubtitle: String(next.kioskSubtitle || next.headingDescription || next.description || "").trim().slice(0, 180),
+    idleMediaMode: normalizeIdleMediaMode(next.idleMediaMode),
+    idleImageUrls: normalizeIdleImageUrls(next.idleImageUrls),
+    idleVideoUrl: normalizePublicAssetUrl(next.idleVideoUrl || ""),
+    idleTimeoutSeconds: normalizeIdleTimeoutSeconds(next.idleTimeoutSeconds),
     projectIds: Array.isArray(next.projectIds)
       ? next.projectIds.map((item) => slug(item, "")).filter(Boolean)
       : String(next.projectIds || "").split(",").map((item) => slug(item, "")).filter(Boolean),
@@ -1175,6 +1181,8 @@ function serveFrontendAsset(res, requestPathname) {
 function ensureUploadDirs() {
   fs.mkdirSync(SERVICE_IMAGE_DIR, { recursive: true });
   fs.mkdirSync(CLIENT_LOGO_DIR, { recursive: true });
+  fs.mkdirSync(IDLE_IMAGE_DIR, { recursive: true });
+  fs.mkdirSync(IDLE_VIDEO_DIR, { recursive: true });
 }
 
 function publicOrigin(req) {
@@ -1265,12 +1273,53 @@ function safeUploadedClientLogoName(filename) {
   return safeUploadedAssetName(filename, "client-logo", [".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 }
 
+function safeUploadedIdleImageName(filename) {
+  return safeUploadedAssetName(filename, "idle-image", [".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+}
+
+function safeUploadedIdleVideoName(filename) {
+  return safeUploadedAssetName(filename, "idle-video", [".mp4", ".webm"]);
+}
+
+function videoContentType(filename) {
+  const extension = path.extname(filename).toLowerCase();
+  return {
+    ".mp4": "video/mp4",
+    ".webm": "video/webm"
+  }[extension] || "application/octet-stream";
+}
+
 function normalizePublicAssetUrl(value = "") {
   const url = String(value || "").trim();
   if (!url) return "";
   if (/^https?:\/\//i.test(url)) return url.slice(0, 2048);
   if (url.startsWith("/uploads/") || url.startsWith("./assets/") || url.startsWith("/assets/")) return url.slice(0, 2048);
   return "";
+}
+
+const IDLE_MEDIA_MODES = new Set(["none", "image", "video"]);
+const IDLE_MAX_IMAGES = 10;
+const IDLE_TIMEOUT_MIN_SECONDS = 15;
+const IDLE_TIMEOUT_MAX_SECONDS = 600;
+const IDLE_TIMEOUT_DEFAULT_SECONDS = 60;
+
+function normalizeIdleMediaMode(value = "") {
+  const mode = String(value || "").trim().toLowerCase();
+  return IDLE_MEDIA_MODES.has(mode) ? mode : "none";
+}
+
+function normalizeIdleImageUrls(value) {
+  const list = Array.isArray(value) ? value : [];
+  return list
+    .map((item) => normalizePublicAssetUrl(item))
+    .filter(Boolean)
+    .slice(0, IDLE_MAX_IMAGES);
+}
+
+function normalizeIdleTimeoutSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return IDLE_TIMEOUT_DEFAULT_SECONDS;
+  return Math.min(IDLE_TIMEOUT_MAX_SECONDS, Math.max(IDLE_TIMEOUT_MIN_SECONDS, Math.round(seconds)));
 }
 
 function s3UploadConfig() {
@@ -1429,6 +1478,68 @@ async function storeClientLogoUpload(req, file) {
   };
 }
 
+async function storeIdleImageUpload(req, file) {
+  const filename = safeUploadedIdleImageName(file.filename);
+  const contentType = file.mimeType && file.mimeType.startsWith("image/") ? file.mimeType : imageContentType(filename);
+  const config = s3UploadConfig();
+
+  if (config.enabled) {
+    const key = s3ObjectKey("idle-images", filename);
+    await putS3Object(config, key, file.content, contentType);
+    return {
+      imageUrl: s3PublicUrl(config, key),
+      filename,
+      storage: "s3",
+      size: file.content.length
+    };
+  }
+
+  if (config.requested) {
+    throw new Error("S3 idle-image upload is not fully configured. Set AWS_S3_BUCKET, AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY.");
+  }
+
+  ensureUploadDirs();
+  fs.writeFileSync(path.join(IDLE_IMAGE_DIR, filename), file.content);
+
+  return {
+    imageUrl: `${publicOrigin(req)}/uploads/idle-images/${encodeURIComponent(filename)}`,
+    filename,
+    storage: "local",
+    size: file.content.length
+  };
+}
+
+async function storeIdleVideoUpload(req, file) {
+  const filename = safeUploadedIdleVideoName(file.filename);
+  const contentType = file.mimeType && file.mimeType.startsWith("video/") ? file.mimeType : videoContentType(filename);
+  const config = s3UploadConfig();
+
+  if (config.enabled) {
+    const key = s3ObjectKey("idle-videos", filename);
+    await putS3Object(config, key, file.content, contentType);
+    return {
+      videoUrl: s3PublicUrl(config, key),
+      filename,
+      storage: "s3",
+      size: file.content.length
+    };
+  }
+
+  if (config.requested) {
+    throw new Error("S3 idle-video upload is not fully configured. Set AWS_S3_BUCKET, AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY.");
+  }
+
+  ensureUploadDirs();
+  fs.writeFileSync(path.join(IDLE_VIDEO_DIR, filename), file.content);
+
+  return {
+    videoUrl: `${publicOrigin(req)}/uploads/idle-videos/${encodeURIComponent(filename)}`,
+    filename,
+    storage: "local",
+    size: file.content.length
+  };
+}
+
 function credentialIdentifier(body = {}) {
   return String(body.identifier || body.email || body.username || body.adminId || body.ownerId || body.id || "").trim();
 }
@@ -1448,8 +1559,18 @@ function kioskAdminBrandFields(admin = {}) {
   };
 }
 
+function kioskAdminIdleScreensaverFields(admin = {}) {
+  return {
+    idleMediaMode: normalizeIdleMediaMode(admin.idleMediaMode),
+    idleImageUrls: normalizeIdleImageUrls(admin.idleImageUrls),
+    idleVideoUrl: normalizePublicAssetUrl(admin.idleVideoUrl || ""),
+    idleTimeoutSeconds: normalizeIdleTimeoutSeconds(admin.idleTimeoutSeconds)
+  };
+}
+
 function publicKioskAdmin(admin = {}) {
   const brand = kioskAdminBrandFields(admin);
+  const idle = kioskAdminIdleScreensaverFields(admin);
 
   return {
     adminId: admin.adminId,
@@ -1459,8 +1580,23 @@ function publicKioskAdmin(admin = {}) {
     logoUrl: brand.logoUrl,
     kioskTitle: brand.kioskTitle,
     kioskSubtitle: brand.kioskSubtitle,
+    idleMediaMode: idle.idleMediaMode,
+    idleImageUrls: idle.idleImageUrls,
+    idleVideoUrl: idle.idleVideoUrl,
+    idleTimeoutSeconds: idle.idleTimeoutSeconds,
     projectIds: Array.isArray(admin.projectIds) ? admin.projectIds : [],
     kioskIds: Array.isArray(admin.kioskIds) ? admin.kioskIds : []
+  };
+}
+
+function publicIdleScreensaver(admin = {}) {
+  const idle = kioskAdminIdleScreensaverFields(admin);
+
+  return {
+    mode: idle.idleMediaMode,
+    imageUrls: idle.idleMediaMode === "image" ? idle.idleImageUrls : [],
+    videoUrl: idle.idleMediaMode === "video" ? idle.idleVideoUrl : "",
+    timeoutSeconds: idle.idleTimeoutSeconds
   };
 }
 
@@ -1470,15 +1606,17 @@ function publicKioskClientBrand(admin = {}) {
   const logoUrl = brand.logoUrl;
   const title = brand.kioskTitle;
   const subtitle = brand.kioskSubtitle;
+  const idleScreensaver = publicIdleScreensaver(admin);
 
-  if (!logoUrl && !title && !subtitle) return null;
+  if (!logoUrl && !title && !subtitle && idleScreensaver.mode === "none") return null;
 
   return {
     clientId: admin.adminId || "",
     name: admin.name || "",
     title: title || String(admin.name || "").trim(),
     subtitle,
-    logoUrl
+    logoUrl,
+    idleScreensaver
   };
 }
 
@@ -1895,6 +2033,20 @@ function isAllowedClientLogo(file) {
   const extension = path.extname(file.filename).toLowerCase();
   const allowedExtensions = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp"]);
   return file.mimeType.startsWith("image/") || allowedExtensions.has(extension);
+}
+
+function isAllowedIdleImage(file) {
+  if (!file?.content?.length || !file.filename) return false;
+  const extension = path.extname(file.filename).toLowerCase();
+  const allowedExtensions = new Set([".gif", ".jpg", ".jpeg", ".png", ".webp"]);
+  return file.mimeType.startsWith("image/") || allowedExtensions.has(extension);
+}
+
+function isAllowedIdleVideo(file) {
+  if (!file?.content?.length || !file.filename) return false;
+  const extension = path.extname(file.filename).toLowerCase();
+  const allowedExtensions = new Set([".mp4", ".webm"]);
+  return file.mimeType.startsWith("video/") || allowedExtensions.has(extension);
 }
 
 function readBody(req) {
@@ -3776,7 +3928,22 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdminSession(req, res, "kiosk-admin")) return;
   }
 
-  if (url.pathname.startsWith("/api/admin/") && url.pathname !== "/api/admin/login" && req.method !== "GET") {
+  // Narrow, explicit carve-out: the idle-screensaver settings are the one thing
+  // a client can self-manage from the Admin panel today. Every other admin
+  // write path (projects, kiosks, pricing, services, refunds, ...) stays
+  // Super-Admin-only exactly as before — do not widen this set casually.
+  const ADMIN_SELF_SERVICE_WRITE_PATHS = new Set([
+    "/api/admin/idle-screensaver",
+    "/api/admin/idle-image",
+    "/api/admin/idle-video"
+  ]);
+
+  if (
+    url.pathname.startsWith("/api/admin/") &&
+    url.pathname !== "/api/admin/login" &&
+    req.method !== "GET" &&
+    !ADMIN_SELF_SERVICE_WRITE_PATHS.has(url.pathname)
+  ) {
     return json(res, 403, { error: "Create, update, and delete actions are available only in Super Admin." });
   }
 
@@ -4097,6 +4264,92 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       });
     } catch (error) {
       return json(res, 500, { error: error.message || "Client logo upload failed." });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/uploads/idle-images/")) {
+    const filename = path.basename(decodeURIComponent(url.pathname.split("/").pop() || ""));
+    const filePath = path.join(IDLE_IMAGE_DIR, filename);
+
+    if (!filename || !filePath.startsWith(IDLE_IMAGE_DIR) || !fs.existsSync(filePath)) {
+      return json(res, 404, { error: "Idle image not found" });
+    }
+
+    return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename));
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/uploads/idle-videos/")) {
+    const filename = path.basename(decodeURIComponent(url.pathname.split("/").pop() || ""));
+    const filePath = path.join(IDLE_VIDEO_DIR, filename);
+
+    if (!filename || !filePath.startsWith(IDLE_VIDEO_DIR) || !fs.existsSync(filePath)) {
+      return json(res, 404, { error: "Idle video not found" });
+    }
+
+    return binary(res, 200, fs.readFileSync(filePath), videoContentType(filename));
+  }
+
+  if (req.method === "POST" && (url.pathname === "/api/admin/idle-image" || url.pathname === "/api/super-admin/idle-image")) {
+    if (!isMultipart) {
+      return json(res, 400, { error: "Upload must use multipart/form-data." });
+    }
+
+    const parts = parseMultipartParts(await readRawBody(req), req.headers["content-type"] || "");
+    const files = parts.filter((part) => part.filename && ["idleImage", "idleImages"].includes(part.name));
+
+    if (!files.length) {
+      return json(res, 400, { error: "Choose at least one idle-screen image to upload." });
+    }
+
+    if (files.length > IDLE_MAX_IMAGES) {
+      return json(res, 400, { error: `Upload at most ${IDLE_MAX_IMAGES} images at a time.` });
+    }
+
+    const invalidFile = files.find((file) => !isAllowedIdleImage(file));
+    if (invalidFile) {
+      return json(res, 400, { error: "Upload PNG, JPG, GIF, or WebP images only." });
+    }
+
+    const oversizedFile = files.find((file) => file.content.length > 4 * 1024 * 1024);
+    if (oversizedFile) {
+      return json(res, 413, { error: "Each idle-screen image must be 4 MB or smaller." });
+    }
+
+    try {
+      const stored = await Promise.all(files.map((file) => storeIdleImageUpload(req, file)));
+      return json(res, 201, { imageUrls: stored.map((item) => item.imageUrl) });
+    } catch (error) {
+      return json(res, 500, { error: error.message || "Idle-screen image upload failed." });
+    }
+  }
+
+  if (req.method === "POST" && (url.pathname === "/api/admin/idle-video" || url.pathname === "/api/super-admin/idle-video")) {
+    if (!isMultipart) {
+      return json(res, 400, { error: "Upload must use multipart/form-data." });
+    }
+
+    const parts = parseMultipartParts(await readRawBody(req), req.headers["content-type"] || "");
+    const file = parts.find((part) => part.filename && ["idleVideo"].includes(part.name)) ||
+      parts.find((part) => part.filename);
+
+    if (!isAllowedIdleVideo(file)) {
+      return json(res, 400, { error: "Upload an MP4 or WebM video." });
+    }
+
+    if (file.content.length > 40 * 1024 * 1024) {
+      return json(res, 413, { error: "Idle-screen video must be 40 MB or smaller." });
+    }
+
+    try {
+      const stored = await storeIdleVideoUpload(req, file);
+      return json(res, 201, {
+        videoUrl: stored.videoUrl,
+        storage: stored.storage,
+        filename: stored.filename,
+        size: stored.size
+      });
+    } catch (error) {
+      return json(res, 500, { error: error.message || "Idle-screen video upload failed." });
     }
   }
 
@@ -4473,6 +4726,30 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   }
 
   const adminSession = url.pathname.startsWith("/api/admin/") ? readAdminSession(req) : null;
+
+  if (req.method === "GET" && url.pathname === "/api/admin/idle-screensaver") {
+    const admin = findKioskAdminById(adminSession?.adminId);
+    if (!admin) return json(res, 404, { error: "Admin account not found." });
+    return json(res, 200, kioskAdminIdleScreensaverFields(admin));
+  }
+
+  if (req.method === "PUT" && url.pathname === "/api/admin/idle-screensaver") {
+    const admin = findKioskAdminById(adminSession?.adminId);
+    if (!admin) return json(res, 404, { error: "Admin account not found." });
+
+    // Whitelist-merge only the 4 idle-screensaver fields — this endpoint must
+    // never let a client touch anything else on their own account record
+    // (adminId, projectIds, status, ...), unlike the generic Super Admin PUT.
+    // Partial-update semantics: a field only changes if it was actually sent,
+    // so an omitted field keeps its saved value instead of being wiped.
+    if (body.idleMediaMode !== undefined) admin.idleMediaMode = normalizeIdleMediaMode(body.idleMediaMode);
+    if (body.idleImageUrls !== undefined) admin.idleImageUrls = normalizeIdleImageUrls(body.idleImageUrls);
+    if (body.idleVideoUrl !== undefined) admin.idleVideoUrl = normalizePublicAssetUrl(body.idleVideoUrl || "");
+    if (body.idleTimeoutSeconds !== undefined) admin.idleTimeoutSeconds = normalizeIdleTimeoutSeconds(body.idleTimeoutSeconds);
+    saveData();
+
+    return json(res, 200, kioskAdminIdleScreensaverFields(admin));
+  }
 
   if (req.method === "GET" && url.pathname === "/api/admin/dashboard") {
     const adminJobs = jobsForAdmin(adminSession);

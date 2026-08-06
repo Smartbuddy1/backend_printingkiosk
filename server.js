@@ -2175,6 +2175,28 @@ function checkoutPayload(payment, job, req = null) {
   };
 }
 
+const QR_CODE_EXPIRY_SECONDS = 15 * 60;
+
+// A UPI QR code any payment app can scan and pay directly - no browser hop.
+// Falls back to Razorpay Orders + Checkout (see /api/payment/create) if the
+// merchant account isn't enabled for the QR Codes product yet.
+async function createRazorpayQrCode(amount, job) {
+  return razorpayRequest("POST", "/v1/payments/qr_codes", {
+    type: "upi_qr",
+    name: "Smart Printing Kiosk",
+    usage: "single_use",
+    fixed_amount: true,
+    payment_amount: amount,
+    description: `${job.fileName} | ${job.pageCount} page(s)`,
+    close_by: Math.floor(Date.now() / 1000) + QR_CODE_EXPIRY_SECONDS,
+    notes: {
+      jobId: job.jobId,
+      kioskId: job.kioskId,
+      service: job.service
+    }
+  });
+}
+
 function secureCompare(expected, actual) {
   const expectedBuffer = Buffer.from(String(expected || ""), "hex");
   const actualBuffer = Buffer.from(String(actual || ""), "hex");
@@ -2279,6 +2301,7 @@ function razorpayWebhookStatus(event, paymentEntity = {}, orderEntity = {}) {
   if (
     eventName === "payment.captured" ||
     eventName === "order.paid" ||
+    eventName === "qr_code.credited" ||
     paymentStatus === "captured" ||
     orderStatus === "paid"
   ) {
@@ -2294,6 +2317,7 @@ function razorpayWebhookDetails(body = {}, req = { headers: {} }) {
   const payload = body.payload || {};
   const paymentEntity = payload.payment?.entity || body.payment?.entity || body.payment || {};
   const orderEntity = payload.order?.entity || body.order?.entity || body.order || {};
+  const qrCodeEntity = payload.qr_code?.entity || body.qr_code?.entity || {};
   const event = String(body.event || "").trim();
   const status = razorpayWebhookStatus(event, paymentEntity, orderEntity);
   const amountInPaise = Number(paymentEntity.amount || paymentEntity.base_amount || orderEntity.amount_paid || orderEntity.amount || 0);
@@ -2306,6 +2330,7 @@ function razorpayWebhookDetails(body = {}, req = { headers: {} }) {
     status,
     orderId: String(paymentEntity.order_id || orderEntity.id || body.razorpay_order_id || body.order_id || "").trim(),
     razorpayPaymentId: String(paymentEntity.id || body.razorpay_payment_id || "").trim(),
+    qrCodeId: String(qrCodeEntity.id || "").trim(),
     kioskPaymentId: String(body.paymentId || body.payment_id || "").trim(),
     amountInPaise: Number.isFinite(amountInPaise) && amountInPaise > 0 ? amountInPaise : 0,
     currency: String(paymentEntity.currency || orderEntity.currency || body.currency || "INR").trim().toUpperCase(),
@@ -2319,7 +2344,8 @@ function findRazorpayPaymentRecord(details = {}) {
   return db.payments.find((payment) => (
     (details.kioskPaymentId && String(payment.paymentId || "") === details.kioskPaymentId) ||
     (details.orderId && String(payment.razorpayOrderId || "") === details.orderId) ||
-    (details.razorpayPaymentId && String(payment.razorpayPaymentId || "") === details.razorpayPaymentId)
+    (details.razorpayPaymentId && String(payment.razorpayPaymentId || "") === details.razorpayPaymentId) ||
+    (details.qrCodeId && String(payment.razorpayQrCodeId || "") === details.qrCodeId)
   ));
 }
 
@@ -3761,7 +3787,7 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
   const config = superAdminCollectionConfig(collection);
 
   if (!config) {
-    return json(res, 404, { error: "Unknown super admin collection." });
+    return json(res, 404, { error: `Unknown super admin collection: "${collection}".` });
   }
 
   const items = config.get();
@@ -4536,7 +4562,6 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
 
     const job = upsertPaymentJob(body);
     const amount = amountToPaise(job.amount);
-    let razorpayOrder;
 
     if (Number.isFinite(amount) && amount <= 0) {
       job.amount = 0;
@@ -4547,7 +4572,8 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
         job,
         payment: null,
         freePrint: true,
-        checkout: null
+        checkout: null,
+        qr: null
       });
     }
 
@@ -4564,19 +4590,32 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 400, { error: "Payment amount is invalid." });
     }
 
+    // Prefer a direct UPI QR code - any payment app scans and pays it without
+    // a browser hop. Falls back to Orders + Checkout if the merchant account
+    // isn't enabled for the QR Codes product (e.g. still pending activation).
+    let qrCode = null;
     try {
-      razorpayOrder = await razorpayRequest("POST", "/v1/orders", {
-        amount,
-        currency: "INR",
-        receipt: safeReceipt(job.jobId),
-        notes: {
-          jobId: job.jobId,
-          kioskId: job.kioskId,
-          service: job.service
-        }
-      });
+      qrCode = await createRazorpayQrCode(amount, job);
     } catch (error) {
-      return json(res, 502, { error: `Unable to create Razorpay order: ${error.message}` });
+      qrCode = null;
+    }
+
+    let razorpayOrder = null;
+    if (!qrCode) {
+      try {
+        razorpayOrder = await razorpayRequest("POST", "/v1/orders", {
+          amount,
+          currency: "INR",
+          receipt: safeReceipt(job.jobId),
+          notes: {
+            jobId: job.jobId,
+            kioskId: job.kioskId,
+            service: job.service
+          }
+        });
+      } catch (error) {
+        return json(res, 502, { error: `Unable to create Razorpay order: ${error.message}` });
+      }
     }
 
     const payment = {
@@ -4586,8 +4625,9 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       amount: job.amount,
       amountInPaise: amount,
       currency: "INR",
-      paymentMethod: "Razorpay Checkout",
-      razorpayOrderId: razorpayOrder.id,
+      paymentMethod: qrCode ? "Razorpay UPI QR" : "Razorpay Checkout",
+      razorpayOrderId: razorpayOrder?.id || "",
+      razorpayQrCodeId: qrCode?.id || "",
       razorpayMode: config.mode,
       status: "Pending",
       createdAt: new Date().toISOString()
@@ -4598,7 +4638,8 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     return json(res, 201, {
       job,
       payment,
-      checkout: checkoutPayload(payment, job, req)
+      checkout: qrCode ? null : checkoutPayload(payment, job, req),
+      qr: qrCode ? { id: qrCode.id, imageUrl: qrCode.image_url, closeBy: qrCode.close_by || null } : null
     });
   }
 

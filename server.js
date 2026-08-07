@@ -2699,6 +2699,10 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           .upload-icon{align-items:center;background:linear-gradient(145deg,var(--blue),#34a8f4);border-radius:16px;box-shadow:0 10px 24px rgba(23,105,245,.24);color:white;display:flex;font-size:29px;font-weight:400;height:58px;justify-content:center;margin-bottom:15px;width:58px;}
           .upload-zone strong{font-size:18px;margin-bottom:5px;}
           .upload-zone small{color:var(--muted);font-size:13px;line-height:1.45;}
+          .camera-button{align-items:center;background:#fff;border:1.5px solid var(--line);border-radius:14px;color:var(--blue-dark);cursor:pointer;display:flex;font-size:14px;font-weight:700;gap:9px;justify-content:center;min-height:50px;padding:0 16px;transition:border-color .18s,background .18s,transform .18s;}
+          .camera-button:active{background:var(--soft);border-color:var(--blue);transform:scale(.99);}
+          .camera-button input{height:1px;opacity:0;overflow:hidden;position:absolute;width:1px;}
+          .camera-icon{font-size:18px;}
           .selection{background:#f8fafc;border:1px solid var(--line);border-radius:14px;padding:14px;}
           .selection[hidden],.message[hidden]{display:none;}
           .selection-head{align-items:center;display:flex;gap:10px;justify-content:space-between;margin-bottom:9px;}
@@ -2826,8 +2830,7 @@ function renderMobileUploadPage(session) {
       }
 
       /* ── file picker ─────────────────────────── */
-      input.addEventListener('change', function () {
-        var files = Array.from(input.files || []);
+      function applySelectedFiles(files) {
         showError('');
 
         if (files.length > MAX) {
@@ -2861,9 +2864,33 @@ function renderMobileUploadPage(session) {
         selection.hidden = false;
         zone.classList.add('selected');
         submitButton.disabled = false;
+      }
+
+      input.addEventListener('change', function () {
+        applySelectedFiles(Array.from(input.files || []));
       });
 
       clearButton.addEventListener('click', resetFiles);
+
+      /* ── camera capture (native, same page - no app/tab switch) ── */
+      var cameraInput = document.getElementById('camera-capture');
+      if (cameraInput && typeof DataTransfer !== 'undefined') {
+        cameraInput.addEventListener('change', function () {
+          var captured = Array.from(cameraInput.files || []);
+          if (!captured.length) return;
+
+          // Merge the captured photo(s) into the same #documents file list so
+          // the existing form submission (name="documents") is untouched -
+          // this only adds to what the picker already collects.
+          var merged = new DataTransfer();
+          Array.from(input.files || []).forEach(function (f) { merged.items.add(f); });
+          captured.forEach(function (f) { merged.items.add(f); });
+          input.files = merged.files;
+          cameraInput.value = '';
+
+          applySelectedFiles(Array.from(input.files || []));
+        });
+      }
 
       /* ── sent view ───────────────────────────── */
       function showSentView(fileCount) {
@@ -2972,6 +2999,11 @@ function renderMobileUploadPage(session) {
           <span class="upload-icon" aria-hidden="true">&#8593;</span>
           <strong>Choose documents</strong>
           <small>Tap to browse PDF, JPG, or PNG files<br />Maximum ${MAX_FILES_PER_JOB} files</small>
+        </label>
+        <label class="camera-button" for="camera-capture">
+          <input id="camera-capture" type="file" accept="image/*" capture="environment" />
+          <span class="camera-icon" aria-hidden="true">&#128247;</span>
+          Scan with camera
         </label>
         <div class="message error" id="message" role="alert" hidden></div>
         <div class="selection" id="selection" hidden>

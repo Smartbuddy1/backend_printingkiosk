@@ -738,7 +738,7 @@
       "name": "NB07",
       "branch": "Local Branch",
       "adminId": "default-admin",
-      "status": "offline",
+      "status": "online",
       "printer": "unknown",
       "scanner": "unknown",
       "appVersion": "1.0.0",
@@ -815,7 +815,7 @@
       "notes": "UI updates, Offline fixes, and Admin improvements",
       "publishedAt": "2026-07-30T15:46:52.045Z",
       "createdAt": "2026-07-30T15:46:52.045Z",
-      "updatedAt": "2026-08-06T11:46:29.813Z"
+      "updatedAt": "2026-08-05T04:23:40.000Z"
     }
   ],
   "config": {
@@ -836,5 +836,5 @@
       "resolvedAt": null
     }
   ],
-  "updatedAt": "2026-08-06T11:46:29.815Z"
+  "updatedAt": "2026-07-30T10:51:42.780Z"
 }

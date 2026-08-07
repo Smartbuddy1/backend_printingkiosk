@@ -17,6 +17,8 @@ const DISABLE_ADMIN_ACCESS = process.env.DISABLE_ADMIN_ACCESS === "true";
 const RAZORPAY_API_BASE = "api.razorpay.com";
 const SETTINGS_PATH = process.env.SETTINGS_PATH ? path.resolve(process.env.SETTINGS_PATH) : path.join(__dirname, "settings.json");
 const DATA_PATH = process.env.DATA_PATH ? path.resolve(process.env.DATA_PATH) : path.join(__dirname, "data.json");
+const ADMIN_SESSIONS_PATH = process.env.ADMIN_SESSIONS_PATH ? path.resolve(process.env.ADMIN_SESSIONS_PATH) : path.join(__dirname, "admin-sessions.json");
+const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const FRONTEND_DIR = path.join(__dirname, "../frontend");
 const FRONTEND_ASSET_DIR = path.join(FRONTEND_DIR, "assets");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
@@ -39,6 +41,7 @@ const KIOSK_UPDATE_STATUSES = new Set([
 ]);
 const mobileUploadSessions = new Map();
 const adminSessions = new Map();
+loadAdminSessions();
 const processedRazorpayWebhookEvents = new Set();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const LOCAL_ONLY_ADMIN_EMAIL = "admin@gmail.com";
@@ -1775,6 +1778,13 @@ function kioskAdminUnlockResponse(body = {}) {
   };
 }
 
+// adminSessions is persisted to disk (see loadAdminSessions/saveAdminSessions
+// below) so logins survive a backend restart - without this, every deploy
+// (or crash/process-manager restart) silently logged everyone out, since a
+// plain in-memory Map is wiped on process exit. Sessions also use a sliding
+// expiry (refreshed on every valid request, see readAdminSession) rather
+// than a fixed 8h-from-login window, so an admin actively using the panel
+// is never logged out mid-session - only genuinely idle sessions expire.
 function createAdminSession(role, account = {}) {
   const token = crypto.randomBytes(32).toString("hex");
   adminSessions.set(token, {
@@ -1782,8 +1792,9 @@ function createAdminSession(role, account = {}) {
     adminId: account.adminId || "",
     email: account.email || "",
     name: account.name || "",
-    expiresAt: Date.now() + 8 * 60 * 60 * 1000
+    expiresAt: Date.now() + ADMIN_SESSION_TTL_MS
   });
+  saveAdminSessions();
   return token;
 }
 
@@ -1798,8 +1809,48 @@ function readAdminSession(req) {
     return null;
   }
 
+  session.expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
   return session;
 }
+
+function loadAdminSessions() {
+  try {
+    if (!fs.existsSync(ADMIN_SESSIONS_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(ADMIN_SESSIONS_PATH, "utf8"));
+    const now = Date.now();
+    Object.entries(raw || {}).forEach(([token, session]) => {
+      if (session && Number(session.expiresAt) > now) {
+        adminSessions.set(token, session);
+      }
+    });
+  } catch (error) {
+    console.error(`Could not load admin sessions: ${error.message}`);
+  }
+}
+
+function saveAdminSessions() {
+  try {
+    writeJsonAtomic(ADMIN_SESSIONS_PATH, Object.fromEntries(adminSessions));
+  } catch (error) {
+    console.error(`Could not save admin sessions: ${error.message}`);
+  }
+}
+
+// Periodic sweep: flushes sliding-expiry refreshes to disk and drops
+// entries that expired between requests, without writing to disk on every
+// single authenticated API call (those happen every few seconds per open
+// admin tab via snapshot polling).
+setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+  for (const [token, session] of adminSessions) {
+    if (session.expiresAt < now) {
+      adminSessions.delete(token);
+      changed = true;
+    }
+  }
+  if (changed || adminSessions.size) saveAdminSessions();
+}, 5 * 60 * 1000);
 
 function requireAdminSession(req, res, role) {
   const session = readAdminSession(req);

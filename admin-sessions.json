@@ -1,0 +1,23 @@
+{
+  "0f0fdaed83f878bd2cada4735b346b3e0206f44fa9b7f517a9528db447b97fe0": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786280270995
+  },
+  "92414665e73fc43fe7441af775881a21f585941bb2ec991de8431733f8a10984": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1786280468909
+  },
+  "ec58ea3ebadbeb881dc9add62c7d595eb8c1bd93f76b73f48d85976eea848985": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786280784708
+  }
+}

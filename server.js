@@ -1375,6 +1375,69 @@ function s3PublicUrl(config, key) {
   return `https://${config.host}/${encodedKey}`;
 }
 
+// S3/CloudFront-hosted assets (client logos when S3 upload is enabled) are
+// plain "public read" objects - fine for an <img> tag, but a browser fetch()
+// from the admin panel's own origin fails because the bucket has no CORS
+// policy, so PDF export (which needs to read image bytes into a canvas) gets
+// nothing back. Fetching the same URL from the SERVER has no such
+// restriction - CORS is a browser-only mechanism - so this proxies exactly
+// those known asset hosts through our own already-CORS-open response.
+function assetProxyAllowedHost(targetUrl) {
+  let parsed;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    return false;
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) return false;
+
+  const s3Config = s3UploadConfig();
+  const allowedHosts = new Set();
+  if (s3Config.host) allowedHosts.add(s3Config.host);
+  if (s3Config.publicBaseUrl) {
+    try { allowedHosts.add(new URL(s3Config.publicBaseUrl).host); } catch {}
+  }
+
+  return allowedHosts.has(parsed.host);
+}
+
+function fetchRemoteBinary(targetUrl, redirectsLeft = 3) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try {
+      parsed = new URL(targetUrl);
+    } catch {
+      reject(new Error("Invalid URL."));
+      return;
+    }
+
+    const lib = parsed.protocol === "https:" ? https : http;
+    const req = lib.get(parsed, { timeout: 15000 }, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location && redirectsLeft > 0) {
+        response.resume();
+        fetchRemoteBinary(new URL(response.headers.location, parsed).toString(), redirectsLeft - 1).then(resolve, reject);
+        return;
+      }
+
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`Remote asset request failed (${response.statusCode}).`));
+          return;
+        }
+        resolve({
+          contentType: response.headers["content-type"] || "application/octet-stream",
+          body: Buffer.concat(chunks)
+        });
+      });
+    });
+
+    req.on("timeout", () => req.destroy(new Error("Remote asset request timed out.")));
+    req.on("error", reject);
+  });
+}
+
 function s3SigningKey(secretAccessKey, dateStamp, region) {
   const dateKey = hmac(`AWS4${secretAccessKey}`, dateStamp);
   const regionKey = hmac(dateKey, region);
@@ -4315,6 +4378,21 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     }
 
     return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename));
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/asset-proxy") {
+    const targetUrl = url.searchParams.get("url") || "";
+
+    if (!targetUrl || !assetProxyAllowedHost(targetUrl)) {
+      return json(res, 403, { error: "That URL is not an allowed asset host." });
+    }
+
+    try {
+      const asset = await fetchRemoteBinary(targetUrl);
+      return binary(res, 200, asset.body, asset.contentType);
+    } catch (error) {
+      return json(res, 502, { error: error.message || "Could not fetch the asset." });
+    }
   }
 
   if (req.method === "POST" && (url.pathname === "/api/admin/service-image" || url.pathname === "/api/super-admin/service-image")) {

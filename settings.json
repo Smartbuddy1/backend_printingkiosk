@@ -156,9 +156,7 @@
       "projectIds": [
         "default-project"
       ],
-      "kioskIds": [
-        "KIOSK-02"
-      ],
+      "kioskIds": [],
       "customerSettings": {
         "bw": true,
         "color": true,
@@ -187,12 +185,24 @@
     "service-18220": {
       "bw": 2,
       "color": 10
+    },
+    "__kiosks": {
+      "KIOSK-NB07": {
+        "govt-form": {
+          "bw": 99,
+          "color": 12
+        },
+        "service-18220": {
+          "bw": 2,
+          "color": 10
+        }
+      }
     }
   },
   "config": {
-    "version": 1785398626250,
-    "updatedAt": "2026-07-30T08:03:46.250Z",
-    "reason": "services-updated"
+    "version": 1786364354004,
+    "updatedAt": "2026-08-10T12:19:14.004Z",
+    "reason": "pricing-updated"
   },
-  "updatedAt": "2026-07-30T08:03:46.250Z"
+  "updatedAt": "2026-08-10T12:19:14.004Z"
 }

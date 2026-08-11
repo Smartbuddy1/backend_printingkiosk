@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { URL } = require("node:url");
 const QRCode = require("qrcode");
+const { WebSocketServer } = require("ws");
 const { loadEnv } = require("./load-env");
 
 loadEnv();
@@ -777,10 +778,11 @@ function saveSettings() {
 function saveData() {
   if (rdsStore.enabled()) {
     persistDatabaseSnapshot();
-    return;
+  } else {
+    writeJsonAtomic(DATA_PATH, dataSnapshot());
   }
 
-  writeJsonAtomic(DATA_PATH, dataSnapshot());
+  broadcastDataChanged();
 }
 
 function serviceRates(serviceId, kioskId = "") {
@@ -2397,15 +2399,6 @@ function titleStatus(value, fallback = "Webhook Received") {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
-function isRazorpayWebhookBody(body = {}) {
-  return Boolean(body && typeof body === "object" && (
-    body.event ||
-    body.payload ||
-    body.razorpay_order_id ||
-    body.razorpay_payment_id
-  ));
-}
-
 function razorpayWebhookStatus(event, paymentEntity = {}, orderEntity = {}) {
   const eventName = String(event || "").toLowerCase();
   const paymentStatus = String(paymentEntity.status || "").toLowerCase();
@@ -2532,32 +2525,7 @@ function verifyRazorpayWebhookBody(req, rawBody) {
   return { ok: true, verified: true };
 }
 
-function handleLegacyPaymentWebhook(res, body = {}) {
-  const payment = db.payments.find((item) => item.paymentId === body.paymentId);
-  if (!payment) return json(res, 404, { error: "Payment not found" });
-
-  payment.status = body.status || "Success";
-  payment.gatewayTransactionId = body.gatewayTransactionId || payment.gatewayTransactionId || `GATEWAY-${Date.now()}`;
-  payment.upiReferenceId = body.upiReferenceId || payment.upiReferenceId || `UPI-${Date.now()}`;
-  payment.paidAt = new Date().toISOString();
-
-  const job = findJob(payment.jobId);
-  if (job && payment.status === "Success") {
-    job.paymentStatus = "Payment Success";
-    if (shouldQueueAfterPayment(job)) {
-      job.printStatus = "In Queue";
-    }
-  }
-
-  saveData();
-  return json(res, 200, { payment, job });
-}
-
 function handlePaymentWebhook(req, res, rawBody, body = {}) {
-  if (!isRazorpayWebhookBody(body) && !req.headers["x-razorpay-signature"]) {
-    return handleLegacyPaymentWebhook(res, body);
-  }
-
   if (body.raw !== undefined) {
     return json(res, 400, { error: "Invalid Razorpay webhook JSON." });
   }
@@ -2840,6 +2808,15 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           .status h2{font-size:24px;margin:0 0 9px;}
           .status p{color:var(--muted);line-height:1.55;margin:0;max-width:340px;}
           .status-note{background:var(--soft);border-radius:12px;color:#40516d;font-size:13px;font-weight:650;margin-top:20px;padding:13px 15px;width:100%;}
+          .status .camera-button{margin-top:20px;width:100%;}
+          .scan-overlay{align-items:center;background:rgba(10,18,36,.92);bottom:0;display:none;flex-direction:column;justify-content:center;left:0;padding:22px;position:fixed;right:0;top:0;z-index:20;}
+          .scan-overlay.open{display:flex;}
+          .scan-frame{background:#000;border-radius:18px;max-width:360px;overflow:hidden;position:relative;width:100%;}
+          .scan-frame video{display:block;height:auto;width:100%;}
+          .scan-frame:after{border:3px solid rgba(255,255,255,.55);border-radius:16px;bottom:14px;content:"";left:14px;position:absolute;right:14px;top:14px;}
+          .scan-hint{color:#fff;font-size:13px;font-weight:650;margin:16px 0 0;text-align:center;}
+          .scan-hint.error{color:#ffb4ae;}
+          .scan-cancel{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);border-radius:12px;color:#fff;font:inherit;font-size:14px;font-weight:700;margin-top:18px;min-height:46px;padding:0 22px;}
           @media(max-width:380px){.page{padding-left:12px;padding-right:12px}.card-head{padding:24px 19px 20px}.card-body{padding:20px 19px 23px}.brand img{width:122px}.step{display:grid;justify-items:center}.upload-zone{min-height:175px}}
         </style>
       </head>
@@ -2864,6 +2841,94 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
   `;
 }
 
+function scanAgainScript() {
+  return `
+    (function () {
+      var btn      = document.getElementById('scan-again-btn');
+      var overlay  = document.getElementById('scan-overlay');
+      var video    = document.getElementById('scan-video');
+      var hint     = document.getElementById('scan-hint');
+      var cancel   = document.getElementById('scan-cancel');
+      if (!btn) return;
+
+      var stream = null;
+      var detector = null;
+      var rafId = null;
+
+      function setHint(text, isError) {
+        if (!hint) return;
+        hint.textContent = text || '';
+        hint.classList.toggle('error', Boolean(isError));
+      }
+
+      function stopScan() {
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = null;
+        if (stream) {
+          stream.getTracks().forEach(function (track) { track.stop(); });
+          stream = null;
+        }
+        if (overlay) overlay.classList.remove('open');
+      }
+
+      function isSafeMobileUploadUrl(value) {
+        try {
+          var url = new URL(value, window.location.href);
+          return url.origin === window.location.origin && /^\\/mobile-upload\\/[^/]+\\/?$/.test(url.pathname);
+        } catch (err) {
+          return false;
+        }
+      }
+
+      function tick() {
+        if (!detector || !video) return;
+        detector.detect(video).then(function (codes) {
+          if (codes && codes.length) {
+            var value = codes[0].rawValue || '';
+            if (isSafeMobileUploadUrl(value)) {
+              setHint('New QR code found. Opening upload page...', false);
+              stopScan();
+              window.location.href = value;
+              return;
+            }
+            setHint('That QR code is not a Print Kiosk upload code. Point the camera at the kiosk screen.', true);
+          }
+          rafId = requestAnimationFrame(tick);
+        }).catch(function () {
+          rafId = requestAnimationFrame(tick);
+        });
+      }
+
+      btn.addEventListener('click', function () {
+        if (!('BarcodeDetector' in window) || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setHint('Your browser cannot scan QR codes on this page. Open your phone\\'s Camera app and point it at the new QR code on the kiosk screen.', true);
+          if (overlay) overlay.classList.add('open');
+          var frame = document.querySelector('.scan-frame');
+          if (frame) frame.style.display = 'none';
+          return;
+        }
+
+        setHint('Starting camera...', false);
+        if (overlay) overlay.classList.add('open');
+
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function (mediaStream) {
+          stream = mediaStream;
+          video.srcObject = stream;
+          video.play();
+          detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+          setHint('Point the camera at the new QR code on the kiosk screen.', false);
+          rafId = requestAnimationFrame(tick);
+        }).catch(function () {
+          setHint('Camera permission is needed to scan. Open your phone\\'s Camera app instead and point it at the new QR code on the kiosk screen.', true);
+        });
+      });
+
+      if (cancel) cancel.addEventListener('click', stopScan);
+      window.addEventListener('pagehide', stopScan);
+    })();
+  `;
+}
+
 function renderMobileStatusPage({ title, heading, description, note, warning = false }) {
   return renderMobileUploadShell({
     title,
@@ -2876,8 +2941,17 @@ function renderMobileStatusPage({ title, heading, description, note, warning = f
         <h2>${warning ? "Scan again" : "You are all set"}</h2>
         <p>${escapeHtml(note)}</p>
         <div class="status-note">${warning ? "Return to the Print Kiosk and generate a new QR code." : "Return to the kiosk to preview your documents and continue to payment."}</div>
+        ${warning ? `<button type="button" id="scan-again-btn" class="camera-button"><span class="camera-icon" aria-hidden="true">&#128247;</span> Scan New QR Code</button>` : ""}
       </div>
-    `
+      ${warning ? `
+        <div class="scan-overlay" id="scan-overlay">
+          <div class="scan-frame"><video id="scan-video" muted playsinline autoplay></video></div>
+          <p class="scan-hint" id="scan-hint"></p>
+          <button type="button" class="scan-cancel" id="scan-cancel">Cancel</button>
+        </div>
+      ` : ""}
+    `,
+    script: warning ? scanAgainScript() : ""
   });
 }
 
@@ -4863,8 +4937,16 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     }
     if (!job) return json(res, 404, { error: "Job not found" });
 
-    if (body.paymentStatus) {
-      job.paymentStatus = body.paymentStatus;
+    // paymentStatus is never taken from the request body — a caller could
+    // otherwise mark any job "Payment Success" without an actual payment and
+    // then start a real print via /api/print/start. It's derived instead
+    // from whether db.payments actually has a Success record for this job,
+    // which is only ever written by the signature-verified Razorpay paths.
+    const hasSuccessfulPayment = db.payments.some(
+      (payment) => payment.jobId === job.jobId && payment.status === "Success"
+    );
+    if (hasSuccessfulPayment) {
+      job.paymentStatus = "Payment Success";
     }
 
     return json(res, 200, {
@@ -5322,6 +5404,39 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   return json(res, 404, { error: "Route not found", path: url.pathname });
 });
 
+// ── Live admin push (WebSocket) ──────────────────────────────────────────────
+// Replaces manual "Refresh" buttons on admin dashboards: rather than a client
+// polling on a timer, the backend pushes a lightweight "data-changed" ping to
+// every connected admin whenever saveData() actually writes something. The
+// socket never carries the data itself (no auth/authorization logic to
+// duplicate here) — clients just re-fetch through the existing authenticated
+// REST endpoints they already use, so this is purely a "check now" signal.
+const wss = new WebSocketServer({ server, path: "/ws" });
+const wsClients = new Set();
+let broadcastDataChangedTimer = null;
+
+wss.on("connection", (socket) => {
+  wsClients.add(socket);
+  socket.on("close", () => wsClients.delete(socket));
+  socket.on("error", () => wsClients.delete(socket));
+});
+
+function broadcastDataChanged() {
+  // Coalesce bursts (e.g. several kiosks heartbeating within the same
+  // second) into a single push instead of one message per saveData() call.
+  if (broadcastDataChangedTimer) return;
+
+  broadcastDataChangedTimer = setTimeout(() => {
+    broadcastDataChangedTimer = null;
+    const payload = JSON.stringify({ type: "data-changed", at: new Date().toISOString() });
+    for (const socket of wsClients) {
+      if (socket.readyState === socket.OPEN) {
+        socket.send(payload);
+      }
+    }
+  }, 300);
+}
+
 async function startServer() {
   db = createRuntimeDb(loadData(), loadSettings());
   await initializePersistence();
@@ -5334,8 +5449,12 @@ async function startServer() {
     db.kiosks.forEach(kiosk => {
       if (kiosk.status === "online") {
         const last = new Date(kiosk.lastOnline).getTime();
-        // 3 minutes without heartbeat = offline
-        if (isNaN(last) || (now - last > 180000)) {
+        // The kiosk heartbeat now retries every ~2-30s under normal
+        // conditions (see syncPrinterHealthToBackend), so 90s without one
+        // is already several missed retries, not a single slow tick —
+        // tightened from 3 minutes so losing internet is reflected here
+        // in well under 2 minutes instead of up to ~4.
+        if (isNaN(last) || (now - last > 90000)) {
           kiosk.status = "offline";
           changed = true;
         }
@@ -5368,7 +5487,7 @@ async function startServer() {
   };
 
   checkKioskTimeouts();
-  setInterval(checkKioskTimeouts, 60000); // Check every minute
+  setInterval(checkKioskTimeouts, 20000); // Check every 20s so the 90s heartbeat timeout above is caught promptly
 
   server.listen(PORT, HOST || undefined, () => {
     const hostLabel = HOST || "localhost";

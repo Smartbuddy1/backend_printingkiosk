@@ -729,6 +729,18 @@
     "service-18220": {
       "bw": 2,
       "color": 10
+    },
+    "__kiosks": {
+      "KIOSK-NB07": {
+        "govt-form": {
+          "bw": 99,
+          "color": 12
+        },
+        "service-18220": {
+          "bw": 2,
+          "color": 10
+        }
+      }
     }
   },
   "kiosks": [
@@ -738,7 +750,7 @@
       "name": "NB07",
       "branch": "Local Branch",
       "adminId": "default-admin",
-      "status": "online",
+      "status": "offline",
       "printer": "unknown",
       "scanner": "unknown",
       "appVersion": "1.0.0",
@@ -786,7 +798,7 @@
         "default-project"
       ],
       "kioskIds": [],
-      "lastLoginAt": "2026-07-30T10:51:42.780Z",
+      "lastLoginAt": "2026-08-10T12:23:41.032Z",
       "logoUrl": "",
       "kioskTitle": "",
       "kioskSubtitle": "",
@@ -815,13 +827,13 @@
       "notes": "UI updates, Offline fixes, and Admin improvements",
       "publishedAt": "2026-07-30T15:46:52.045Z",
       "createdAt": "2026-07-30T15:46:52.045Z",
-      "updatedAt": "2026-08-05T04:23:40.000Z"
+      "updatedAt": "2026-08-10T09:16:29.821Z"
     }
   ],
   "config": {
-    "version": 1785405249254,
-    "updatedAt": "2026-07-30T09:54:09.254Z",
-    "reason": "kiosks-updated"
+    "version": 1786364354004,
+    "updatedAt": "2026-08-10T12:19:14.004Z",
+    "reason": "pricing-updated"
   },
   "alertLogs": [
     {
@@ -834,7 +846,18 @@
       "status": "active",
       "createdAt": "2026-08-06T06:14:22.325Z",
       "resolvedAt": null
+    },
+    {
+      "id": "ALT-1786364273837-629",
+      "kioskId": "KIOSK-02",
+      "category": "network",
+      "title": "KIOSK-02 - Kiosk Offline",
+      "detail": "The kiosk PC has lost internet connection or is turned off.",
+      "tone": "bad",
+      "status": "active",
+      "createdAt": "2026-08-10T12:17:53.837Z",
+      "resolvedAt": null
     }
   ],
-  "updatedAt": "2026-07-30T10:51:42.780Z"
+  "updatedAt": "2026-08-10T12:24:55.641Z"
 }

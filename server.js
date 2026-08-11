@@ -4174,14 +4174,21 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdminSession(req, res, "kiosk-admin")) return;
   }
 
-  // Narrow, explicit carve-out: the idle-screensaver settings are the one thing
-  // a client can self-manage from the Admin panel today. Every other admin
-  // write path (projects, kiosks, pricing, services, refunds, ...) stays
-  // Super-Admin-only exactly as before — do not widen this set casually.
+  // Narrow, explicit carve-out: idle-screensaver settings and this kiosk
+  // admin's own pricing are the only things a client can self-manage from
+  // the Admin panel today. /api/admin/pricing's handler (see below) already
+  // filters both the service IDs and the __kiosks override keys down to
+  // servicesForAdmin(adminSession)/kioskIdsForAdmin(adminSession) before
+  // writing anything, so a kiosk admin can only ever move rates for their
+  // own assigned services/kiosks, never anyone else's - added deliberately,
+  // not by widening this blindly. Every other admin write path (projects,
+  // kiosks, services, refunds, ...) stays Super-Admin-only exactly as
+  // before - do not widen this set casually.
   const ADMIN_SELF_SERVICE_WRITE_PATHS = new Set([
     "/api/admin/idle-screensaver",
     "/api/admin/idle-image",
-    "/api/admin/idle-video"
+    "/api/admin/idle-video",
+    "/api/admin/pricing"
   ]);
 
   if (

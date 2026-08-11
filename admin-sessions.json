@@ -12,5 +12,68 @@
     "email": "superadmin@printingkiosk.local",
     "name": "Super Admin",
     "expiresAt": 1786449032440
+  },
+  "100993ff86c5685666caf53aa506a5e9023cb388b568cab922d9321943bdcd8f": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786451006805
+  },
+  "2cf42cb5446cd822434ac27c9b9d56daca8ab2c038079f673ca8a58d7c58e467": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786451160733
+  },
+  "cde4d8199cd8a483a3b5a7643d69fc216e55fc44decd41fad745298c36220080": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786451249180
+  },
+  "cc8ddcbdb3d6a8ac7fa476807c5131d62cdbec33c784ffe588ffcb0add1e963c": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786451307726
+  },
+  "c285b19e9bb0b3bd25fc7c17200862c37035f4003a1b22632c01f4eb7bdd8d2e": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786451566765
+  },
+  "73cb0265ee9d2d5f1592f8c7c3b1699dd092bf6921e8a3681ca7e2077b1e8932": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786451798371
+  },
+  "f3925b9d337b1bdd0a6b3e1bc2415ff2ee7ade32bc978e4a6c2b727c5a3582bf": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786453313641
+  },
+  "2b654c0f0a55fd9531f994a775edf24b16c219de6c0fbe2a95c39ef8cef6575b": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1786457531861
+  },
+  "63c0863901857f712323433490b9178ca13723a4f04cb1d036c17482312b0029": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1786460446823
   }
 }

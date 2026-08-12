@@ -2808,8 +2808,26 @@ function mobileUploadLogoDataUri() {
   return cachedMobileUploadLogoDataUri;
 }
 
+// Full wordmark (logo + "Aarya Innovtech Pvt. Ltd.") for the page header -
+// kept separate from the compact mark-only favicon above.
+let cachedMobileUploadFullLogoDataUri = null;
+function mobileUploadFullLogoDataUri() {
+  if (cachedMobileUploadFullLogoDataUri !== null) return cachedMobileUploadFullLogoDataUri;
+
+  try {
+    const logoPath = path.join(__dirname, "assets", "mobile-upload-full-logo.png");
+    const buffer = fs.readFileSync(logoPath);
+    cachedMobileUploadFullLogoDataUri = `data:image/png;base64,${buffer.toString("base64")}`;
+  } catch {
+    cachedMobileUploadFullLogoDataUri = "";
+  }
+
+  return cachedMobileUploadFullLogoDataUri;
+}
+
 function renderMobileUploadShell({ title, eyebrow, heading, description, content, script = "" }) {
   const logoUrl = mobileUploadLogoDataUri();
+  const brandLogoUrl = mobileUploadFullLogoDataUri() || logoUrl;
   return `
     <!doctype html>
     <html lang="en">
@@ -2827,8 +2845,8 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           body:before{background:linear-gradient(90deg,var(--blue),#20a7f7,var(--green));content:"";height:5px;left:0;position:fixed;right:0;top:0;z-index:2;}
           .page{align-items:center;display:flex;justify-content:center;min-height:100vh;padding:max(28px,env(safe-area-inset-top)) 18px max(28px,env(safe-area-inset-bottom));}
           .shell{max-width:480px;width:100%;}
-          .brand{align-items:center;display:flex;justify-content:center;margin:0 auto 18px;}
-          .brand img{display:block;height:auto;width:142px;}
+          .brand{align-items:center;background:#fff;border-radius:18px;box-shadow:0 10px 26px rgba(31,74,140,.14);display:flex;justify-content:center;margin:0 auto 18px;padding:14px 20px;}
+          .brand img{display:block;height:auto;width:200px;}
           .card{background:rgba(255,255,255,.96);border:1px solid rgba(205,219,238,.92);border-radius:24px;box-shadow:0 26px 70px rgba(31,74,140,.16);overflow:hidden;}
           .card-head{background:linear-gradient(145deg,#fafdff,#f1f6ff);border-bottom:1px solid var(--line);padding:28px 26px 24px;text-align:center;}
           .eyebrow{align-items:center;background:#eaf2ff;border:1px solid #cfe0ff;border-radius:999px;color:var(--blue);display:inline-flex;font-size:12px;font-weight:800;letter-spacing:.08em;padding:7px 11px;text-transform:uppercase;}
@@ -2881,13 +2899,13 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           .scan-hint{color:#fff;font-size:13px;font-weight:650;margin:16px 0 0;text-align:center;}
           .scan-hint.error{color:#ffb4ae;}
           .scan-cancel{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);border-radius:12px;color:#fff;font:inherit;font-size:14px;font-weight:700;margin-top:18px;min-height:46px;padding:0 22px;}
-          @media(max-width:380px){.page{padding-left:12px;padding-right:12px}.card-head{padding:24px 19px 20px}.card-body{padding:20px 19px 23px}.brand img{width:122px}.step{display:grid;justify-items:center}.upload-zone{min-height:175px}}
+          @media(max-width:380px){.page{padding-left:12px;padding-right:12px}.card-head{padding:24px 19px 20px}.card-body{padding:20px 19px 23px}.brand img{width:170px}.step{display:grid;justify-items:center}.upload-zone{min-height:175px}}
         </style>
       </head>
       <body>
         <main class="page">
           <div class="shell">
-            <a class="brand" href="#" aria-label="Print Kiosk"><img src="${logoUrl}" alt="Print Kiosk" /></a>
+            <a class="brand" href="#" aria-label="Print Kiosk"><img src="${brandLogoUrl}" alt="Aarya Innovtech Pvt. Ltd." /></a>
             <section class="card">
               <header class="card-head">
                 <span class="eyebrow">${escapeHtml(eyebrow)}</span>
@@ -3172,26 +3190,6 @@ function renderMobileUploadPage(session) {
 
       clearButton.addEventListener('click', resetFiles);
 
-      /* ── camera capture (native, same page - no app/tab switch) ── */
-      var cameraInput = document.getElementById('camera-capture');
-      if (cameraInput && typeof DataTransfer !== 'undefined') {
-        cameraInput.addEventListener('change', function () {
-          var captured = Array.from(cameraInput.files || []);
-          if (!captured.length) return;
-
-          // Merge the captured photo(s) into the same #documents file list so
-          // the existing form submission (name="documents") is untouched -
-          // this only adds to what the picker already collects.
-          var merged = new DataTransfer();
-          Array.from(input.files || []).forEach(function (f) { merged.items.add(f); });
-          captured.forEach(function (f) { merged.items.add(f); });
-          input.files = merged.files;
-          cameraInput.value = '';
-
-          applySelectedFiles(Array.from(input.files || []));
-        });
-      }
-
       /* ── sent view ───────────────────────────── */
       function showSentView(fileCount) {
         // Swap header
@@ -3299,11 +3297,6 @@ function renderMobileUploadPage(session) {
           <span class="upload-icon" aria-hidden="true">&#8593;</span>
           <strong>Choose documents</strong>
           <small>Tap to browse PDF, JPG, or PNG files<br />Maximum ${MAX_FILES_PER_JOB} files</small>
-        </label>
-        <label class="camera-button" for="camera-capture">
-          <input id="camera-capture" type="file" accept="image/*" capture="environment" />
-          <span class="camera-icon" aria-hidden="true">&#128247;</span>
-          Scan with camera
         </label>
         <div class="message error" id="message" role="alert" hidden></div>
         <div class="selection" id="selection" hidden>

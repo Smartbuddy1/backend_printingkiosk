@@ -19,5 +19,12 @@
     "email": "admin@gmail.com",
     "name": "Kiosk Admin",
     "expiresAt": 1786546290951
+  },
+  "e1ae32d76b8fb5af8f1ba9261edd5a9734d377e76de3fd170d0796a49b9127b5": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1786552725717
   }
 }

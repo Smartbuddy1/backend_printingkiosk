@@ -4,13 +4,13 @@
   "description": "Backend API for the printing kiosk.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "start:render": "node server.js"
   },
   "license": "MIT",
   "dependencies": {
     "pg": "^8.21.0",
-    "qrcode": "^1.5.4",
-    "ws": "^8.21.3"
+    "qrcode": "^1.5.4"
   },
   "engines": {
     "node": ">=20"

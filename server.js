@@ -30,6 +30,7 @@ const IDLE_VIDEO_DIR = path.join(UPLOADS_DIR, "idle-videos");
 const MAX_FILES_PER_JOB = 10;
 // Must match MAX_UPLOAD_PAGES_PER_DOCUMENT in frontend/app.js.
 const MAX_UPLOAD_PAGES_PER_DOCUMENT = 10;
+const MAX_UPLOAD_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const CUSTOMER_UPLOAD_EXTENSIONS = new Set(["PDF", "JPG", "JPEG", "PNG"]);
 const KIOSK_PRINTER_STALE_MS = 10 * 60 * 1000;
 const KIOSK_UPDATE_STATUSES = new Set([
@@ -3071,6 +3072,7 @@ function renderMobileUploadPage(session) {
       var MAX     = ${MAX_FILES_PER_JOB};
       var POLL_MS = 2500;
       var supported = /\\.(pdf|jpe?g|png)$/i;
+      var MAX_FILE_SIZE_BYTES = ${MAX_UPLOAD_FILE_SIZE_BYTES};
 
       var form         = document.getElementById('upload-form');
       var input        = document.getElementById('documents');
@@ -3166,6 +3168,12 @@ function renderMobileUploadPage(session) {
         if (files.some(function (f) { return !supported.test(f.name); })) {
           resetFiles();
           showError('Only PDF, JPG, JPEG, and PNG files are supported.');
+          return;
+        }
+        var oversizedFile = files.find(function (f) { return f.size > MAX_FILE_SIZE_BYTES; });
+        if (oversizedFile) {
+          resetFiles();
+          showError(oversizedFile.name + ' is too large (' + (oversizedFile.size / (1024 * 1024)).toFixed(1) + ' MB). This kiosk allows up to 10 MB per document.');
           return;
         }
         if (!files.length) { resetFiles(); return; }
@@ -4809,6 +4817,17 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
         heading: "That file type is not supported",
         description: "Print Kiosk accepts PDF, JPG, JPEG, and PNG documents from this mobile upload page.",
         note: "Nothing was added to the print session.",
+        warning: true
+      }));
+    }
+
+    const oversizedFile = files.find((file) => file.size > MAX_UPLOAD_FILE_SIZE_BYTES);
+    if (oversizedFile) {
+      return html(res, 400, renderMobileStatusPage({
+        title: "File too large",
+        heading: "That document is too large",
+        description: `"${oversizedFile.name}" is ${(oversizedFile.size / (1024 * 1024)).toFixed(1)} MB. This kiosk allows up to 10 MB per document.`,
+        note: "Nothing was added to the print session. Choose a smaller file and try again.",
         warning: true
       }));
     }

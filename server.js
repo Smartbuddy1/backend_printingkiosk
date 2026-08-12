@@ -5596,12 +5596,12 @@ async function startServer() {
     db.kiosks.forEach(kiosk => {
       if (kiosk.status === "online") {
         const last = new Date(kiosk.lastOnline).getTime();
-        // The kiosk heartbeat now retries every ~2-30s under normal
-        // conditions (see syncPrinterHealthToBackend), so 90s without one
+        // The kiosk heartbeat now retries every ~2-3s under normal
+        // conditions (see syncPrinterHealthToBackend), so 5s without one
         // is already several missed retries, not a single slow tick —
-        // tightened from 3 minutes so losing internet is reflected here
-        // in well under 2 minutes instead of up to ~4.
-        if (isNaN(last) || (now - last > 90000)) {
+        // tightened from 30s so losing internet is reflected here within
+        // single-digit seconds instead of up to ~40.
+        if (isNaN(last) || (now - last > 5000)) {
           kiosk.status = "offline";
           changed = true;
         }
@@ -5634,7 +5634,7 @@ async function startServer() {
   };
 
   checkKioskTimeouts();
-  setInterval(checkKioskTimeouts, 20000); // Check every 20s so the 90s heartbeat timeout above is caught promptly
+  setInterval(checkKioskTimeouts, 2000); // Check every 2s so the 5s heartbeat timeout above is caught promptly
 
   server.listen(PORT, HOST || undefined, () => {
     const hostLabel = HOST || "localhost";

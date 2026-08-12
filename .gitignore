@@ -1,3 +1,11 @@
 node_modules/
 .env
 npm-debug.log*
+
+# Runtime data - changes constantly while the server is live, and tracking
+# it in git causes every deploy pull to conflict with the live server's
+# current state. Not needed in version control.
+data.json
+admin-sessions.json
+backend.log
+uploads/

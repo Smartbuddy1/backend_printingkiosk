@@ -28,6 +28,8 @@ const CLIENT_LOGO_DIR = path.join(UPLOADS_DIR, "client-logos");
 const IDLE_IMAGE_DIR = path.join(UPLOADS_DIR, "idle-images");
 const IDLE_VIDEO_DIR = path.join(UPLOADS_DIR, "idle-videos");
 const MAX_FILES_PER_JOB = 10;
+// Must match MAX_UPLOAD_PAGES_PER_DOCUMENT in frontend/app.js.
+const MAX_UPLOAD_PAGES_PER_DOCUMENT = 10;
 const CUSTOMER_UPLOAD_EXTENSIONS = new Set(["PDF", "JPG", "JPEG", "PNG"]);
 const KIOSK_PRINTER_STALE_MS = 10 * 60 * 1000;
 const KIOSK_UPDATE_STATUSES = new Set([
@@ -2747,6 +2749,27 @@ function parseMultipartFile(buffer, contentType, fieldName = "document") {
   };
 }
 
+// Lightweight, dependency-free page-count heuristic used as a server-side
+// backstop behind the mobile-upload page's own pdf.js check (which a client
+// could bypass by skipping JS / calling this endpoint directly). Prefers the
+// authoritative /Count on the /Pages root; falls back to counting individual
+// /Type /Page objects.
+function estimatePdfPageCount(buffer) {
+  try {
+    const text = buffer.toString("latin1");
+    const countMatches = [...text.matchAll(/\/Type\s*\/Pages\b[^>]*?\/Count\s+(\d+)/g)];
+    if (countMatches.length) {
+      const max = Math.max(...countMatches.map((match) => Number(match[1]) || 0));
+      if (max > 0) return max;
+    }
+
+    const pageMatches = text.match(/\/Type\s*\/Page(?!s)\b/g);
+    return pageMatches ? pageMatches.length : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseMultipartFiles(buffer, contentType) {
   return parseMultipartParts(buffer, contentType)
     .filter((part) => part.filename && ["document", "documents"].includes(part.name))
@@ -2764,8 +2787,26 @@ function parseMultipartFiles(buffer, contentType) {
     });
 }
 
+// Embedded as a data URI (not a URL to /assets/...) so the logo always
+// renders regardless of PUBLIC_FRONTEND_URL config or whether this backend's
+// deployment happens to serve the frontend's static files alongside itself.
+let cachedMobileUploadLogoDataUri = null;
+function mobileUploadLogoDataUri() {
+  if (cachedMobileUploadLogoDataUri !== null) return cachedMobileUploadLogoDataUri;
+
+  try {
+    const logoPath = path.join(FRONTEND_ASSET_DIR, "aarya-innovtech-logo.png");
+    const buffer = fs.readFileSync(logoPath);
+    cachedMobileUploadLogoDataUri = `data:image/png;base64,${buffer.toString("base64")}`;
+  } catch {
+    cachedMobileUploadLogoDataUri = "";
+  }
+
+  return cachedMobileUploadLogoDataUri;
+}
+
 function renderMobileUploadShell({ title, eyebrow, heading, description, content, script = "" }) {
-  const logoUrl = `${frontendAssetOrigin()}/assets/aarya-innovtech-logo.png`;
+  const logoUrl = mobileUploadLogoDataUri();
   return `
     <!doctype html>
     <html lang="en">
@@ -3037,22 +3078,40 @@ function renderMobileUploadPage(session) {
         list.replaceChildren();
       }
 
-      /* ── file picker ─────────────────────────── */
-      function applySelectedFiles(files) {
-        showError('');
-
-        if (files.length > MAX) {
-          resetFiles();
-          showError('Choose no more than ' + MAX + ' files.');
-          return;
+      /* ── PDF page-count limit (must match MAX_UPLOAD_PAGES_PER_DOCUMENT in
+         frontend/app.js) - rejected here, on the phone, before the file is
+         ever sent to the kiosk. ─────────────────── */
+      var MAX_PDF_PAGES = 10;
+      var pdfjsPromise = null;
+      function loadPdfJs() {
+        if (!pdfjsPromise) {
+          pdfjsPromise = import('/assets/vendor/pdfjs/pdf.min.mjs').then(function (lib) {
+            lib.GlobalWorkerOptions.workerSrc = '/assets/vendor/pdfjs/pdf.worker.min.mjs';
+            return lib;
+          });
         }
-        if (files.some(function (f) { return !supported.test(f.name); })) {
-          resetFiles();
-          showError('Only PDF, JPG, JPEG, and PNG files are supported.');
-          return;
-        }
-        if (!files.length) { resetFiles(); return; }
+        return pdfjsPromise;
+      }
 
+      function checkPdfPageLimits(files) {
+        var pdfFiles = files.filter(function (f) { return /\.pdf$/i.test(f.name); });
+        if (!pdfFiles.length) return Promise.resolve(null);
+
+        return loadPdfJs().then(function (pdfjsLib) {
+          return Promise.all(pdfFiles.map(function (f) {
+            return f.arrayBuffer()
+              .then(function (buf) { return pdfjsLib.getDocument({ data: buf }).promise; })
+              .then(function (pdf) { return { name: f.name, pages: pdf.numPages }; })
+              .catch(function () { return { name: f.name, pages: null }; });
+          }));
+        }).then(function (results) {
+          var tooMany = results.find(function (r) { return r.pages && r.pages > MAX_PDF_PAGES; });
+          if (!tooMany) return null;
+          return tooMany.name + ' has ' + tooMany.pages + ' pages. This kiosk allows up to ' + MAX_PDF_PAGES + ' pages per document.';
+        }).catch(function () { return null; });
+      }
+
+      function finalizeSelection(files) {
         count.textContent = files.length + (files.length === 1 ? ' file selected' : ' files selected');
         list.replaceChildren();
         files.slice(0, 4).forEach(function (f) {
@@ -3072,6 +3131,36 @@ function renderMobileUploadPage(session) {
         selection.hidden = false;
         zone.classList.add('selected');
         submitButton.disabled = false;
+      }
+
+      /* ── file picker ─────────────────────────── */
+      function applySelectedFiles(files) {
+        showError('');
+
+        if (files.length > MAX) {
+          resetFiles();
+          showError('Choose no more than ' + MAX + ' files.');
+          return;
+        }
+        if (files.some(function (f) { return !supported.test(f.name); })) {
+          resetFiles();
+          showError('Only PDF, JPG, JPEG, and PNG files are supported.');
+          return;
+        }
+        if (!files.length) { resetFiles(); return; }
+
+        submitButton.disabled = true;
+        showError('Checking document…');
+
+        checkPdfPageLimits(files).then(function (pageError) {
+          if (pageError) {
+            resetFiles();
+            showError(pageError);
+            return;
+          }
+          showError('');
+          finalizeSelection(files);
+        });
       }
 
       input.addEventListener('change', function () {
@@ -4724,6 +4813,21 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
         heading: "That file type is not supported",
         description: "Print Kiosk accepts PDF, JPG, JPEG, and PNG documents from this mobile upload page.",
         note: "Nothing was added to the print session.",
+        warning: true
+      }));
+    }
+
+    const oversizedPdf = files.find((file) => {
+      if (file.extension !== "PDF") return false;
+      const pages = estimatePdfPageCount(file.content);
+      return pages && pages > MAX_UPLOAD_PAGES_PER_DOCUMENT;
+    });
+    if (oversizedPdf) {
+      return html(res, 400, renderMobileStatusPage({
+        title: "Too many pages",
+        heading: "That document has too many pages",
+        description: `"${oversizedPdf.name}" has too many pages. This kiosk allows up to ${MAX_UPLOAD_PAGES_PER_DOCUMENT} pages per document.`,
+        note: "Nothing was added to the print session. Choose a shorter document and try again.",
         warning: true
       }));
     }

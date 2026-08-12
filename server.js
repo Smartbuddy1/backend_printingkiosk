@@ -2794,8 +2794,11 @@ let cachedMobileUploadLogoDataUri = null;
 function mobileUploadLogoDataUri() {
   if (cachedMobileUploadLogoDataUri !== null) return cachedMobileUploadLogoDataUri;
 
+  // Read from backend/assets (bundled with this file) rather than
+  // FRONTEND_ASSET_DIR - standalone backend-only deployments (no sibling
+  // frontend/ checkout) would otherwise always fail this read.
   try {
-    const logoPath = path.join(FRONTEND_ASSET_DIR, "aarya-innovtech-logo.png");
+    const logoPath = path.join(__dirname, "assets", "mobile-upload-logo.png");
     const buffer = fs.readFileSync(logoPath);
     cachedMobileUploadLogoDataUri = `data:image/png;base64,${buffer.toString("base64")}`;
   } catch {

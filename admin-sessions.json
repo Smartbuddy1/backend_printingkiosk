@@ -1,135 +1,23 @@
 {
-  "c285b19e9bb0b3bd25fc7c17200862c37035f4003a1b22632c01f4eb7bdd8d2e": {
+  "4e9a961b77c304c4268bd1cd7b4a76bd959a79d5932187a2d3fb1a26b18d6889": {
     "role": "super-admin",
     "adminId": "",
     "email": "superadmin@printingkiosk.local",
     "name": "Super Admin",
-    "expiresAt": 1786451566765
+    "expiresAt": 1786543033599
   },
-  "73cb0265ee9d2d5f1592f8c7c3b1699dd092bf6921e8a3681ca7e2077b1e8932": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786451798371
-  },
-  "f3925b9d337b1bdd0a6b3e1bc2415ff2ee7ade32bc978e4a6c2b727c5a3582bf": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786453313641
-  },
-  "2b654c0f0a55fd9531f994a775edf24b16c219de6c0fbe2a95c39ef8cef6575b": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786457531861
-  },
-  "63c0863901857f712323433490b9178ca13723a4f04cb1d036c17482312b0029": {
+  "841f45c6324dc97f820cb13a26d85789ab882e8b920039752c200af45f01d539": {
     "role": "kiosk-admin",
     "adminId": "default-admin",
     "email": "admin@gmail.com",
     "name": "Kiosk Admin",
-    "expiresAt": 1786472584925
+    "expiresAt": 1786546245702
   },
-  "3b735526cfcb57911789d8bcee08c2c1ab7310791fb3d95a212cb9b7a5a17c34": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786472599708
-  },
-  "6456e884de178cdaa1090e1a7424ee201f5b5514b75ca819de37012a2b406e7d": {
+  "dc05dc49c295c05b76b209d132b24ebd47e5d91f920b603cfa4fc994689a2567": {
     "role": "kiosk-admin",
     "adminId": "default-admin",
     "email": "admin@gmail.com",
     "name": "Kiosk Admin",
-    "expiresAt": 1786477082814
-  },
-  "ebf433e3106b1c1962ad5f507ea5d28fced895c2ace3042465e2df162e0fd025": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786477090131
-  },
-  "3f2588a7dfaf72f81bbd769b4b9e5a65e4bb3ea8a31e4f9bc48c2b1d5bf28602": {
-    "role": "kiosk-admin",
-    "adminId": "default-admin",
-    "email": "admin@gmail.com",
-    "name": "Kiosk Admin",
-    "expiresAt": 1786479351344
-  },
-  "60928fadbb236d82149728c878dbacb34fb93a7509b39f6470eac3024a03f5bb": {
-    "role": "kiosk-admin",
-    "adminId": "default-admin",
-    "email": "admin@gmail.com",
-    "name": "Kiosk Admin",
-    "expiresAt": 1786479715711
-  },
-  "af0b355c5e6b9f1403c427391623c065ee9849d990b5febfa49a2f0a1e910d9f": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786479576521
-  },
-  "dd6a1348120a35423f4126c572e7bcc80992b93ae502c54f5cf9ba631bc43e74": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786479658428
-  },
-  "3c6b0dd552e0f71b7fdf96248f86b44d077705a53ad53cc86fac387c313f9968": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786479699786
-  },
-  "b813d4c43a3b0807bfa7ece399b67c1aff4ab306d34e6432e5a5bdfbb5db20c2": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786479932503
-  },
-  "e1dd08c157f6b58507b9d4ec1d5159d00ef36c88f22d65f8acd92cbd6d8af6d7": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786480155060
-  },
-  "c38c334cd95a0492fabd001ff02c91df3c454e5696c94712be5cfe7ad7305617": {
-    "role": "kiosk-admin",
-    "adminId": "default-admin",
-    "email": "admin@gmail.com",
-    "name": "Kiosk Admin",
-    "expiresAt": 1786480226281
-  },
-  "2dcd28e59fdf57f0728dfb43be6d1831a4af5a354bc6c779811181794ac6c360": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786480271690
-  },
-  "946538e9b3a1c1a9aee2487d7f7d0982395c4feb611edc17fea61432d6b90043": {
-    "role": "super-admin",
-    "adminId": "",
-    "email": "superadmin@printingkiosk.local",
-    "name": "Super Admin",
-    "expiresAt": 1786480304035
-  },
-  "d7c5bfc04494ccc7a505a5c0306a1143c30a9017e367f6e3faef09bd96449838": {
-    "role": "kiosk-admin",
-    "adminId": "default-admin",
-    "email": "admin@gmail.com",
-    "name": "Kiosk Admin",
-    "expiresAt": 1786480309602
+    "expiresAt": 1786546290951
   }
 }

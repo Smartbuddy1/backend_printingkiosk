@@ -4717,8 +4717,8 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 400, { error: "Upload an MP4 or WebM video." });
     }
 
-    if (file.content.length > 40 * 1024 * 1024) {
-      return json(res, 413, { error: "Idle-screen video must be 40 MB or smaller." });
+    if (file.content.length > 50 * 1024 * 1024) {
+      return json(res, 413, { error: "Idle-screen video must be 50 MB or smaller." });
     }
 
     try {

@@ -753,15 +753,31 @@ function clonedDataSnapshot() {
   return JSON.parse(JSON.stringify(dataSnapshot()));
 }
 
+async function persistSnapshotWithRetry(snapshot, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await rdsStore.saveSnapshot(snapshot);
+      return;
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        // Data (including alert logs) stays in the in-memory db either way and
+        // will be included in the next successful save, so a transient failure
+        // here isn't permanent data loss on its own - but log loudly since a
+        // save that never recovers before a server restart would lose it.
+        console.error(`RDS save failed after ${maxAttempts} attempts: ${error.message}`);
+        return;
+      }
+      console.warn(`RDS save attempt ${attempt} failed, retrying: ${error.message}`);
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+}
+
 function persistDatabaseSnapshot() {
   if (!rdsStore.enabled()) return;
 
   const snapshot = clonedDataSnapshot();
-  databaseSaveQueue = databaseSaveQueue
-    .then(() => rdsStore.saveSnapshot(snapshot))
-    .catch((error) => {
-      console.error(`RDS save failed: ${error.message}`);
-    });
+  databaseSaveQueue = databaseSaveQueue.then(() => persistSnapshotWithRetry(snapshot));
 }
 
 function saveSettings() {
@@ -3447,6 +3463,15 @@ function setJobPrintStatus(job, printStatus, extra = {}) {
 
   if (/completed/i.test(job.printStatus)) {
     job.completedAt = new Date().toISOString();
+    // Whether the local print agent actually observed this job reach the
+    // printer queue and clear it, vs. just gave up waiting after never
+    // seeing it (still reported as a completed job either way - see
+    // waitForWindowsPrintCompletion() in local-agent/printerAgent.js -
+    // but this flag lets an operator tell the two apart if a customer
+    // reports a job that never physically printed).
+    if (typeof extra.completionConfirmed === "boolean") {
+      job.completionConfirmed = extra.completionConfirmed;
+    }
   }
 
   if (/failed/i.test(job.printStatus)) {
@@ -5097,7 +5122,10 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     }
 
     return json(res, 200, {
-      job: setJobPrintStatus(job, body.printStatus, { failureReason: body.failureReason })
+      job: setJobPrintStatus(job, body.printStatus, {
+        failureReason: body.failureReason,
+        completionConfirmed: body.completionConfirmed
+      })
     });
   }
 

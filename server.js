@@ -15,6 +15,12 @@ const rdsStore = require("./rds-store");
 const PORT = Number(process.env.PORT || 5080);
 const HOST = process.env.HOST || "";
 const DISABLE_ADMIN_ACCESS = process.env.DISABLE_ADMIN_ACCESS === "true";
+// Separate from DISABLE_ADMIN_ACCESS (which blocks both /admin and
+// /super-admin together, e.g. for a fully locked-down customer-kiosk
+// deployment) - this blocks only /super-admin, leaving /admin (Kiosk Admin)
+// reachable. Off by default so existing deployments are unaffected unless
+// explicitly opted in.
+const DISABLE_SUPER_ADMIN_ACCESS = process.env.DISABLE_SUPER_ADMIN_ACCESS === "true";
 const RAZORPAY_API_BASE = "api.razorpay.com";
 const SETTINGS_PATH = process.env.SETTINGS_PATH ? path.resolve(process.env.SETTINGS_PATH) : path.join(__dirname, "settings.json");
 const DATA_PATH = process.env.DATA_PATH ? path.resolve(process.env.DATA_PATH) : path.join(__dirname, "data.json");
@@ -126,6 +132,7 @@ const FRONTEND_FILES = new Set([
 ]);
 const FRONTEND_ASSETS = new Set(["printhub-logo.png", "printhub-mark.png"]);
 const ADMIN_FRONTEND_FILES = new Set(["admin.html", "super-admin.html", "super-admin.js"]);
+const SUPER_ADMIN_FRONTEND_FILES = new Set(["super-admin.html", "super-admin.js"]);
 
 const DEFAULT_SERVICES = [
   {
@@ -4246,12 +4253,31 @@ const server = http.createServer(async (req, res) => {
     return json(res, 403, { error: "Admin access is disabled on this kiosk." });
   }
 
+  if (DISABLE_SUPER_ADMIN_ACCESS && (
+    url.pathname === "/super-admin" ||
+    url.pathname.startsWith("/api/super-admin/")
+  )) {
+    return json(res, 403, { error: "Super Admin access is disabled on this domain." });
+  }
+
   if (req.method === "GET" && url.pathname === "/admin") {
     return redirect(res, "/admin.html");
   }
 
   if (req.method === "GET" && url.pathname === "/super-admin") {
     return redirect(res, "/super-admin.html");
+  }
+
+  // Branded customer-facing alias for the QR/mobile-payment link (see
+  // buildMobilePaymentUrl() in frontend/app.js) - normalizeIndexPageUrl()
+  // there always appends "/index.html" to an extensionless configured URL,
+  // so PUBLIC_FRONTEND_URL=".../printingkiosk" actually produces
+  // ".../printingkiosk/index.html?mobilePayment=...&backendUrl=...";
+  // both forms are handled here. The query string (mobilePayment/backendUrl)
+  // is preserved on redirect - dropping it would break the "continue on
+  // your phone" flow for anyone who scans the QR.
+  if (req.method === "GET" && (url.pathname === "/printingkiosk" || url.pathname === "/printingkiosk/index.html")) {
+    return redirect(res, `/index.html${url.search}`);
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/assets/")) {
@@ -4262,6 +4288,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === `/${frontendFilename}` && FRONTEND_FILES.has(frontendFilename)) {
     if (DISABLE_ADMIN_ACCESS && ADMIN_FRONTEND_FILES.has(frontendFilename)) {
       return json(res, 403, { error: "Admin access is disabled on this kiosk." });
+    }
+    if (DISABLE_SUPER_ADMIN_ACCESS && SUPER_ADMIN_FRONTEND_FILES.has(frontendFilename)) {
+      return json(res, 403, { error: "Super Admin access is disabled on this domain." });
     }
 
     return serveFrontendFile(res, frontendFilename);

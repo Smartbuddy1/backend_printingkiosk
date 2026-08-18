@@ -4520,6 +4520,13 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       printer: printerHealth.printerName || kiosk.printer || "unknown",
       printerHealth,
       scanner: String(body.scannerStatus || kiosk.scanner || "unknown").trim(),
+      // The kiosk PC reaching this endpoint only proves it can reach ITS OWN
+      // backend (often just http://localhost on a standalone install) - not
+      // that it has real internet. internetOnline is a separate signal the
+      // kiosk's Electron main process measures against external hosts, kept
+      // distinct from `status` above for exactly that reason. Older kiosk
+      // builds that don't send it yet just keep whatever was last known.
+      internetOnline: typeof body.internetOnline === "boolean" ? body.internetOnline : (kiosk.internetOnline !== false),
       lastOnline: now
     });
 

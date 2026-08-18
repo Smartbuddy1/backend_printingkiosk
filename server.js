@@ -3486,6 +3486,19 @@ function setJobPrintStatus(job, printStatus, extra = {}) {
     job.failureReason = extra.failureReason || job.failureReason || "Print failed";
   }
 
+  // Clear any "stuck in queue" alert (see checkStaleJobs()) the moment the
+  // job actually reaches a terminal state, even if that happened after the
+  // sweep already flagged it as stale - otherwise the alert would stay
+  // "active" forever once it's no longer true.
+  if (/completed|failed/i.test(job.printStatus)) {
+    const staleAlertTitle = `${job.kioskId || "Kiosk"} - Print Job Stuck (${job.jobId})`;
+    const staleAlert = db.alertLogs.find((a) => a.title === staleAlertTitle && a.status === "active");
+    if (staleAlert) {
+      staleAlert.status = "resolved";
+      staleAlert.resolvedAt = new Date().toISOString();
+    }
+  }
+
   saveData();
   return job;
 }
@@ -5032,6 +5045,33 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 400, { error: "Payment amount is invalid." });
     }
 
+    // Avoid piling up duplicate "Pending" Razorpay orders/QR codes for the
+    // same job every time this endpoint is called again (page refresh, a
+    // retry after a slow response, re-scanning the mobile "continue on your
+    // phone" QR) - reuse a still-valid pending payment for the identical
+    // amount instead of creating a brand new one. Falls through to creating
+    // a fresh order/QR exactly as before if there's no match (first
+    // attempt, the previous one expired, or the job's amount changed since
+    // it was created, e.g. the customer changed copies/pages).
+    const reusablePending = db.payments.find((payment) => (
+      payment.jobId === job.jobId &&
+      payment.status === "Pending" &&
+      payment.gateway === "razorpay" &&
+      payment.amountInPaise === amount &&
+      (Date.now() - new Date(payment.createdAt).getTime()) < QR_CODE_EXPIRY_SECONDS * 1000
+    ));
+
+    if (reusablePending) {
+      return json(res, 201, {
+        job,
+        payment: reusablePending,
+        checkout: reusablePending.razorpayQrCodeId ? null : checkoutPayload(reusablePending, job, req),
+        qr: reusablePending.razorpayQrCodeId
+          ? { id: reusablePending.razorpayQrCodeId, imageUrl: reusablePending.qrImageUrl || "", closeBy: reusablePending.qrCloseBy || null }
+          : null
+      });
+    }
+
     // Prefer a direct UPI QR code - any payment app scans and pays it without
     // a browser hop. Falls back to Orders + Checkout if the merchant account
     // isn't enabled for the QR Codes product (e.g. still pending activation).
@@ -5071,6 +5111,8 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       paymentMethod: qrCode ? "Razorpay UPI QR" : "Razorpay Checkout",
       razorpayOrderId: razorpayOrder?.id || "",
       razorpayQrCodeId: qrCode?.id || "",
+      qrImageUrl: qrCode?.image_url || "",
+      qrCloseBy: qrCode?.close_by || null,
       razorpayMode: config.mode,
       status: "Pending",
       createdAt: new Date().toISOString()
@@ -5699,6 +5741,54 @@ async function startServer() {
 
   checkKioskTimeouts();
   setInterval(checkKioskTimeouts, 2000); // Check every 2s so the 5s heartbeat timeout above is caught promptly
+
+  // A paid job normally clears "In Queue"/"Printing" within seconds to a
+  // couple minutes. If the local print agent crashes, the kiosk loses
+  // power mid-print, or it just never picks the job up, nothing previously
+  // detected that - the job sat there forever with no alert and no way for
+  // staff to notice short of a customer complaint. Mirrors the kiosk
+  // offline sweep above: same alertLogs table, same dedup-by-title pattern,
+  // resolved automatically in setJobPrintStatus() once the job actually
+  // finishes (even late).
+  const STALE_JOB_TIMEOUT_MS = 10 * 60 * 1000;
+
+  const checkStaleJobs = () => {
+    let changed = false;
+    const now = Date.now();
+    const iso = new Date(now).toISOString();
+
+    db.jobs.forEach(job => {
+      if (job.printStatus !== "In Queue" && job.printStatus !== "Printing") return;
+
+      const successfulPayment = db.payments.find(p => p.jobId === job.jobId && p.status === "Success");
+      const referenceTime = successfulPayment?.paidAt || job.createdAt;
+      if (!referenceTime) return;
+
+      const elapsedMs = now - new Date(referenceTime).getTime();
+      if (elapsedMs < STALE_JOB_TIMEOUT_MS) return;
+
+      const alertTitle = `${job.kioskId || "Kiosk"} - Print Job Stuck (${job.jobId})`;
+      const existingActive = db.alertLogs.find(a => a.title === alertTitle && a.status === 'active');
+      if (!existingActive) {
+        db.alertLogs.push({
+          id: "ALT-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
+          kioskId: job.kioskId || "Unknown",
+          category: "queue",
+          title: alertTitle,
+          detail: `This job has been "${job.printStatus}" for over ${Math.round(elapsedMs / 60000)} minute(s) without completing. Check the local print agent and printer connection at this kiosk.`,
+          tone: "bad",
+          status: 'active',
+          createdAt: iso,
+          resolvedAt: null
+        });
+        changed = true;
+      }
+    });
+    if (changed) saveData();
+  };
+
+  checkStaleJobs();
+  setInterval(checkStaleJobs, 30000); // Stale jobs move on a much slower timescale than kiosk heartbeats
 
   server.listen(PORT, HOST || undefined, () => {
     const hostLabel = HOST || "localhost";

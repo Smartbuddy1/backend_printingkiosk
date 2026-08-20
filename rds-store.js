@@ -10,7 +10,6 @@ const collections = {
   payments: { table: "kiosk_payments", keyColumn: "payment_id", keyField: "paymentId" },
   services: { table: "kiosk_services", keyColumn: "service_id", keyField: "id" },
   kiosks: { table: "kiosks", keyColumn: "kiosk_id", keyField: "kioskId" },
-  refunds: { table: "kiosk_refunds", keyColumn: "refund_id", keyField: "refundId" },
   alertLogs: { table: "kiosk_alerts", keyColumn: "alert_id", keyField: "id" }
 };
 
@@ -64,12 +63,6 @@ async function initDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS kiosk_refunds (
-      refund_id TEXT PRIMARY KEY,
-      data JSONB NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
     CREATE TABLE IF NOT EXISTS kiosk_alerts (
       alert_id TEXT PRIMARY KEY,
       data JSONB NOT NULL,
@@ -108,7 +101,6 @@ async function loadSnapshot() {
     payments: await loadCollection(client, "payments"),
     services: await loadCollection(client, "services"),
     kiosks: await loadCollection(client, "kiosks"),
-    refunds: await loadCollection(client, "refunds"),
     alertLogs: await loadCollection(client, "alertLogs"),
     kioskAdmins: await loadSetting(client, "kioskAdmins", []),
     projects: await loadSetting(client, "projects", []),
@@ -172,7 +164,6 @@ async function saveSnapshot(snapshot) {
     await replaceCollection(client, "payments", snapshot.payments);
     await replaceCollection(client, "services", snapshot.services);
     await replaceCollection(client, "kiosks", snapshot.kiosks);
-    await replaceCollection(client, "refunds", snapshot.refunds);
     // Alert history is append/update-only (rows are never removed, only marked
     // resolved) - upsert here instead of the destructive delete-then-reinsert
     // replaceCollection uses elsewhere. That way a save from a process with a

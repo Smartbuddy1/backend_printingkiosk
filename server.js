@@ -12,6 +12,17 @@ const { loadEnv } = require("./load-env");
 loadEnv();
 const rdsStore = require("./rds-store");
 
+// Last-resort safety net: an error thrown outside the request handler's own
+// try/catch (e.g. inside a setInterval tick, a WebSocket event, or a
+// fire-and-forget promise) would otherwise crash the entire process and take
+// down every kiosk at once. Log and keep running instead.
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception (process kept alive):", error);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection (process kept alive):", reason);
+});
+
 const PORT = Number(process.env.PORT || 5080);
 const HOST = process.env.HOST || "";
 const DISABLE_ADMIN_ACCESS = process.env.DISABLE_ADMIN_ACCESS === "true";
@@ -688,7 +699,6 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
     kiosks,
     projects,
     kioskAdmins,
-    refunds: Array.isArray(persistedData.refunds) ? persistedData.refunds : [],
     releases: Array.isArray(persistedData.releases)
       ? persistedData.releases.map((release) => normalizeKioskRelease(release)).filter(Boolean)
       : [],
@@ -748,7 +758,6 @@ function dataSnapshot() {
     kiosks: db.kiosks,
     projects: db.projects,
     kioskAdmins: db.kioskAdmins,
-    refunds: db.refunds,
     releases: db.releases,
     config: db.config,
     alertLogs: db.alertLogs,
@@ -1109,7 +1118,7 @@ function publicServicesResponse(scope = {}) {
 }
 
 function snapshotHasData(snapshot = {}) {
-  return ["jobs", "payments", "services", "kiosks", "refunds"].some((key) => Array.isArray(snapshot[key]) && snapshot[key].length);
+  return ["jobs", "payments", "services", "kiosks"].some((key) => Array.isArray(snapshot[key]) && snapshot[key].length);
 }
 
 async function initializePersistence() {
@@ -1156,13 +1165,26 @@ function redirect(res, location) {
   res.end();
 }
 
-function binary(res, status, body, contentType) {
-  res.writeHead(status, {
+function binary(res, status, body, contentType, options = {}) {
+  const headers = {
     "Content-Type": contentType || "application/octet-stream",
     "Access-Control-Allow-Origin": "*"
-  });
+  };
+  if (options.cacheControl) headers["Cache-Control"] = options.cacheControl;
+  res.writeHead(status, headers);
   res.end(body);
 }
+
+// Uploaded client-logo/service-image/idle-media filenames are already
+// unique per upload (timestamp + random suffix - see
+// safeUploadedAssetName()), so the same URL can never point to different
+// content later; safe to cache for a long time. Without this, the browser
+// re-requests the image on every re-render (the customer screen does a full
+// innerHTML rebuild, not DOM diffing), which is fine online but means any
+// re-render while offline fails the request and falls back to the generic
+// placeholder branding - even though the correct image loaded fine earlier
+// in the same session.
+const IMMUTABLE_UPLOAD_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 function frontendContentType(filename) {
   const extension = path.extname(filename).toLowerCase();
@@ -1645,24 +1667,14 @@ function credentialsMatch(body, expected) {
   const expectedEmail = String(expected.email || "").trim().toLowerCase();
   const expectedPassword = String(expected.password || "");
 
-  const validIdentifiers = new Set([
-    expectedEmail,
-    expectedEmail.split("@")[0],
-    "superadmin",
-    "superadmin@printingkiosk.local",
-    "superadmin@gmail.com",
-    "super",
-    "admin"
-  ]);
+  // Only the actually-configured email (and its username-only shorthand,
+  // e.g. "owner" for "owner@example.com") are valid identifiers. When no
+  // SUPER_ADMIN_EMAIL/PASSWORD env var is set, `expected` itself already
+  // falls back to LOCAL_ONLY_SUPER_ADMIN_EMAIL/PASSWORD, so the local-dev
+  // login keeps working with no extra entries needed here.
+  const validIdentifiers = new Set([expectedEmail, expectedEmail.split("@")[0]].filter(Boolean));
 
-  const validPasswords = new Set([
-    expectedPassword,
-    "super1234",
-    "local-super-admin-password",
-    "superdemo1234"
-  ]);
-
-  return validIdentifiers.has(identifier) && validPasswords.has(password);
+  return Boolean(expectedPassword) && validIdentifiers.has(identifier) && password === expectedPassword;
 }
 
 function kioskAdminBrandFields(admin = {}) {
@@ -2055,12 +2067,6 @@ function paymentsForJobs(jobs = []) {
   return db.payments.filter((payment) => jobIds.has(String(payment.jobId || "")));
 }
 
-function refundsForJobs(jobs = [], payments = []) {
-  const jobIds = new Set(jobs.map((job) => String(job.jobId || "")));
-  const paymentIds = new Set(payments.map((payment) => String(payment.paymentId || "")));
-  return db.refunds.filter((refund) => jobIds.has(String(refund.jobId || "")) || paymentIds.has(String(refund.paymentId || "")));
-}
-
 function servicesForAdmin(session = {}, kioskId = "") {
   const allowed = kioskIdsForAdmin(session);
   const allowedProjects = projectIdsForAdmin(session);
@@ -2211,19 +2217,47 @@ function isAllowedIdleVideo(file) {
   return file.mimeType.startsWith("video/") || allowedExtensions.has(extension);
 }
 
+// Generous backstop, well above the largest legitimate body today (a
+// MAX_FILES_PER_JOB x MAX_UPLOAD_FILE_SIZE_BYTES print upload tops out
+// around 100MB) - only rejects bodies far beyond anything a real client
+// sends, so normal uploads are unaffected.
+const MAX_REQUEST_BODY_BYTES = 150 * 1024 * 1024;
+
 function readBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let raw = "";
+    let bytes = 0;
+    let settled = false;
     req.on("data", (chunk) => {
+      if (settled) return;
+      bytes += chunk.length;
+      if (bytes > MAX_REQUEST_BODY_BYTES) {
+        settled = true;
+        req.destroy();
+        reject(new Error("Request body too large"));
+        return;
+      }
       raw += chunk;
     });
     req.on("end", () => {
+      if (settled) return;
+      settled = true;
       if (!raw) return resolve({});
       try {
-        resolve(JSON.parse(raw));
+        const parsed = JSON.parse(raw);
+        // JSON.parse("null")/("42")/("\"x\"") succeed but aren't usable as a
+        // body object - callers do body.someField everywhere, which would
+        // throw on a non-object. Fall back to the same { raw } shape already
+        // used for unparseable bodies instead of letting that throw escape.
+        resolve(parsed && typeof parsed === "object" ? parsed : { raw });
       } catch {
         resolve({ raw });
       }
+    });
+    req.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
     });
   });
 }
@@ -2241,13 +2275,30 @@ function parseJsonBuffer(buffer) {
 }
 
 function readRawBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const chunks = [];
+    let bytes = 0;
+    let settled = false;
     req.on("data", (chunk) => {
+      if (settled) return;
+      bytes += chunk.length;
+      if (bytes > MAX_REQUEST_BODY_BYTES) {
+        settled = true;
+        req.destroy();
+        reject(new Error("Request body too large"));
+        return;
+      }
       chunks.push(chunk);
     });
     req.on("end", () => {
+      if (settled) return;
+      settled = true;
       resolve(Buffer.concat(chunks));
+    });
+    req.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
     });
   });
 }
@@ -3424,12 +3475,16 @@ function createJob(body) {
   return job;
 }
 
-function calculatePrice(job) {
+function computePriceAmount(job) {
   const pages = Math.max(1, Number(job.pageCount) || 1);
   const copies = Math.max(1, Number(job.copies) || 1);
   const rates = serviceRates(job.service, job.kioskId);
   const rate = job.colorMode === "color" ? rates.color : rates.bw;
-  const amount = pages * copies * rate;
+  return { amount: pages * copies * rate, rate };
+}
+
+function calculatePrice(job) {
+  const { amount, rate } = computePriceAmount(job);
   job.amount = amount;
   job.rate = rate;
   job.printStatus = "Price Calculated";
@@ -3837,21 +3892,6 @@ function normalizeKioskPrinterHealth(record = {}) {
   };
 }
 
-function normalizeSuperAdminRefund(record = {}, existing = {}) {
-  const next = { ...existing, ...record };
-
-  return {
-    ...next,
-    refundId: String(existing.refundId || next.refundId || `REF-${Date.now()}`).trim(),
-    jobId: String(next.jobId || "").trim(),
-    paymentId: String(next.paymentId || "").trim(),
-    amount: numericPrice(next.amount, 0),
-    reason: String(next.reason || "Admin refund").trim(),
-    status: String(next.status || "Refund Pending").trim(),
-    requestedAt: next.requestedAt || existing.requestedAt || isoNow()
-  };
-}
-
 function normalizeSuperAdminService(record = {}, existing = {}) {
   return normalizeServices([{ ...existing, ...record, id: existing.id || record.id }])[0];
 }
@@ -3897,14 +3937,6 @@ function superAdminCollectionConfig(collection) {
         db.kioskAdmins = normalizeKioskAdmins(items);
       },
       normalize: normalizeKioskAdmin
-    },
-    refunds: {
-      key: "refundId",
-      get: () => db.refunds,
-      set: (items) => {
-        db.refunds = items;
-      },
-      normalize: normalizeSuperAdminRefund
     },
     services: {
       key: "id",
@@ -3977,7 +4009,6 @@ function saveSuperAdminCollection(collection) {
 
 function superAdminSummary() {
   const gross = db.jobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
-  const refunds = db.refunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
   const templates = db.services.reduce((sum, service) => sum + (service.templates?.length || 0), 0);
 
   return {
@@ -3988,10 +4019,9 @@ function superAdminSummary() {
     templates,
     jobs: db.jobs.length,
     payments: db.payments.length,
-    refunds: db.refunds.length,
     releases: db.releases.length,
     gross,
-    net: gross - refunds,
+    net: gross,
     failedJobs: db.jobs.filter((job) => /failed/i.test(job.printStatus || "")).length,
     activeKiosks: db.kiosks.filter((kiosk) => kiosk.status === "online").length
   };
@@ -4029,7 +4059,6 @@ function buildSuperAdminHierarchy() {
       services: kioskServices,
       jobs: kioskJobs,
       payments: db.payments.filter((payment) => jobIds.has(payment.jobId)),
-      refunds: db.refunds.filter((refund) => jobIds.has(refund.jobId)),
       totals: {
         jobs: kioskJobs.length,
         payments: db.payments.filter((payment) => jobIds.has(payment.jobId)).length,
@@ -4052,7 +4081,6 @@ function superAdminSnapshot() {
       kiosks: db.kiosks,
       projects: db.projects,
       kioskAdmins: db.kioskAdmins.map(publicKioskAdmin),
-      refunds: db.refunds,
       releases: db.releases,
       config: db.config,
       alertLogs: db.alertLogs
@@ -4086,7 +4114,10 @@ function validateSuperAdminRecord(collection, record, existing = null) {
     if (!kioskId) return "Kiosk ID is required.";
     if (kioskIdInUse(kioskId, ignoreKioskId)) return "Kiosk ID already exists. Use a unique kiosk ID.";
     if (!setupCode) return "Mini PC setup code is required.";
-    if (setupCodeInUse(setupCode, ignoreKioskId)) return "Mini PC setup code already exists. Generate a new setup code.";
+    // Setup codes are intentionally allowed to repeat across kiosks - the
+    // kiosk ID (always unique, checked above) is what the installer/backend
+    // actually key activation off of, so the same code can be reused as a
+    // standard install PIN for every kiosk instead of tracking one per kiosk.
     if (!db.projects.some((project) => project.projectId === record.projectId)) {
       return "Select an existing project before creating the kiosk.";
     }
@@ -4239,7 +4270,14 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
   return json(res, 405, { error: "Unsupported super admin operation." });
 }
 
+// Serializes concurrent /api/payment/create calls per jobId (see usage
+// below) so two near-simultaneous requests for the same job (double-tap,
+// a retry after a slow response) can't both pass the "no pending payment
+// yet" check and each create a separate Razorpay order/QR.
+const paymentCreationLocks = new Map();
+
 const server = http.createServer(async (req, res) => {
+ try {
   if (req.method === "OPTIONS") return json(res, 200, { ok: true });
 
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -4362,8 +4400,8 @@ const server = http.createServer(async (req, res) => {
   // writing anything, so a kiosk admin can only ever move rates for their
   // own assigned services/kiosks, never anyone else's - added deliberately,
   // not by widening this blindly. Every other admin write path (projects,
-  // kiosks, services, refunds, ...) stays Super-Admin-only exactly as
-  // before - do not widen this set casually.
+  // kiosks, services, ...) stays Super-Admin-only exactly as before - do
+  // not widen this set casually.
   const ADMIN_SELF_SERVICE_WRITE_PATHS = new Set([
     "/api/admin/idle-screensaver",
     "/api/admin/idle-image",
@@ -4502,6 +4540,16 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     const kiosk = db.kiosks.find((item) => normalizeKioskCode(item.kioskId) === kioskId);
     if (!kiosk) return json(res, 404, { error: "Kiosk not found." });
 
+    // Unlike its siblings (/api/kiosk/update/manifest, /status), this
+    // heartbeat isn't sent with a deviceId today, so it can't be hard-gated
+    // behind validateKioskDevice() without breaking every currently-deployed
+    // kiosk. Only reject when a deviceId IS present and doesn't match the
+    // activation on record - closes the "guess a kioskId, spoof its health"
+    // gap for any future/updated caller without touching today's callers.
+    if (body.deviceId && kiosk.activatedAt && normalizeActivationDeviceId(kiosk.activationDeviceId) !== normalizeActivationDeviceId(body.deviceId)) {
+      return json(res, 403, { error: "Device identity does not match this kiosk activation." });
+    }
+
     const printerHealth = normalizeKioskPrinterHealth(body.printerHealth || body.printer || {});
     const now = isoNow();
     // Use `ready` (printer physically ready) for printer readiness.
@@ -4634,7 +4682,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 404, { error: "Service image not found" });
     }
 
-    return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename));
+    return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename), { cacheControl: IMMUTABLE_UPLOAD_CACHE_CONTROL });
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/uploads/client-logos/")) {
@@ -4645,7 +4693,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 404, { error: "Client logo not found" });
     }
 
-    return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename));
+    return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename), { cacheControl: IMMUTABLE_UPLOAD_CACHE_CONTROL });
   }
 
   if (req.method === "GET" && url.pathname === "/api/asset-proxy") {
@@ -4730,7 +4778,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 404, { error: "Idle image not found" });
     }
 
-    return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename));
+    return binary(res, 200, fs.readFileSync(filePath), imageContentType(filename), { cacheControl: IMMUTABLE_UPLOAD_CACHE_CONTROL });
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/uploads/idle-videos/")) {
@@ -4741,7 +4789,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 404, { error: "Idle video not found" });
     }
 
-    return binary(res, 200, fs.readFileSync(filePath), videoContentType(filename));
+    return binary(res, 200, fs.readFileSync(filePath), videoContentType(filename), { cacheControl: IMMUTABLE_UPLOAD_CACHE_CONTROL });
   }
 
   if (req.method === "POST" && (url.pathname === "/api/admin/idle-image" || url.pathname === "/api/super-admin/idle-image")) {
@@ -4975,7 +5023,11 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   if (req.method === "GET" && url.pathname.startsWith("/api/jobs/price/")) {
     const job = findJob(url.pathname.split("/").pop());
     if (!job) return json(res, 404, { error: "Job not found" });
-    return json(res, 200, { jobId: job.jobId, amount: calculatePrice(job), pricing: db.pricing });
+    // Read-only lookup - must not mutate printStatus as a side effect of a
+    // GET (that would regress an already-"Printing"/"Completed" job's status
+    // on a mere re-fetch). Persisting the price happens via the real
+    // write path, upsertPaymentJob() -> calculatePrice().
+    return json(res, 200, { jobId: job.jobId, amount: computePriceAmount(job).amount, pricing: db.pricing });
   }
 
   if (req.method === "GET" && url.pathname === "/api/payment/qr") {
@@ -5045,87 +5097,101 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 400, { error: "Payment amount is invalid." });
     }
 
-    // Avoid piling up duplicate "Pending" Razorpay orders/QR codes for the
-    // same job every time this endpoint is called again (page refresh, a
-    // retry after a slow response, re-scanning the mobile "continue on your
-    // phone" QR) - reuse a still-valid pending payment for the identical
-    // amount instead of creating a brand new one. Falls through to creating
-    // a fresh order/QR exactly as before if there's no match (first
-    // attempt, the previous one expired, or the job's amount changed since
-    // it was created, e.g. the customer changed copies/pages).
-    const reusablePending = db.payments.find((payment) => (
-      payment.jobId === job.jobId &&
-      payment.status === "Pending" &&
-      payment.gateway === "razorpay" &&
-      payment.amountInPaise === amount &&
-      (Date.now() - new Date(payment.createdAt).getTime()) < QR_CODE_EXPIRY_SECONDS * 1000
-    ));
+    // Serialize concurrent creation attempts for the same job (see
+    // paymentCreationLocks declaration) before the reuse-check below, so two
+    // near-simultaneous requests can't both see "no pending payment yet".
+    while (paymentCreationLocks.has(job.jobId)) {
+      await paymentCreationLocks.get(job.jobId);
+    }
+    let releasePaymentCreationLock;
+    paymentCreationLocks.set(job.jobId, new Promise((resolve) => { releasePaymentCreationLock = resolve; }));
 
-    if (reusablePending) {
+    try {
+      // Avoid piling up duplicate "Pending" Razorpay orders/QR codes for the
+      // same job every time this endpoint is called again (page refresh, a
+      // retry after a slow response, re-scanning the mobile "continue on your
+      // phone" QR) - reuse a still-valid pending payment for the identical
+      // amount instead of creating a brand new one. Falls through to creating
+      // a fresh order/QR exactly as before if there's no match (first
+      // attempt, the previous one expired, or the job's amount changed since
+      // it was created, e.g. the customer changed copies/pages).
+      const reusablePending = db.payments.find((payment) => (
+        payment.jobId === job.jobId &&
+        payment.status === "Pending" &&
+        payment.gateway === "razorpay" &&
+        payment.amountInPaise === amount &&
+        (Date.now() - new Date(payment.createdAt).getTime()) < QR_CODE_EXPIRY_SECONDS * 1000
+      ));
+
+      if (reusablePending) {
+        return json(res, 201, {
+          job,
+          payment: reusablePending,
+          checkout: reusablePending.razorpayQrCodeId ? null : checkoutPayload(reusablePending, job, req),
+          qr: reusablePending.razorpayQrCodeId
+            ? { id: reusablePending.razorpayQrCodeId, imageUrl: reusablePending.qrImageUrl || "", closeBy: reusablePending.qrCloseBy || null }
+            : null
+        });
+      }
+
+      // Prefer a direct UPI QR code - any payment app scans and pays it without
+      // a browser hop. Falls back to Orders + Checkout if the merchant account
+      // isn't enabled for the QR Codes product (e.g. still pending activation).
+      let qrCode = null;
+      try {
+        qrCode = await createRazorpayQrCode(amount, job);
+      } catch (error) {
+        qrCode = null;
+        console.error(`[razorpay] UPI QR code creation failed for job ${job.jobId}, falling back to Checkout: ${error.message}`);
+      }
+
+      let razorpayOrder = null;
+      if (!qrCode) {
+        try {
+          razorpayOrder = await razorpayRequest("POST", "/v1/orders", {
+            amount,
+            currency: "INR",
+            receipt: safeReceipt(job.jobId),
+            notes: {
+              jobId: job.jobId,
+              kioskId: job.kioskId,
+              service: job.service
+            }
+          });
+        } catch (error) {
+          return json(res, 502, { error: `Unable to create Razorpay order: ${error.message}` });
+        }
+      }
+
+      const payment = {
+        paymentId: `PAY-${Date.now()}`,
+        gateway: "razorpay",
+        jobId: job.jobId,
+        amount: job.amount,
+        amountInPaise: amount,
+        currency: "INR",
+        paymentMethod: qrCode ? "Razorpay UPI QR" : "Razorpay Checkout",
+        razorpayOrderId: razorpayOrder?.id || "",
+        razorpayQrCodeId: qrCode?.id || "",
+        qrImageUrl: qrCode?.image_url || "",
+        qrCloseBy: qrCode?.close_by || null,
+        razorpayMode: config.mode,
+        status: "Pending",
+        createdAt: new Date().toISOString()
+      };
+      db.payments.push(payment);
+      job.paymentStatus = "Payment Pending";
+      saveData();
       return json(res, 201, {
         job,
-        payment: reusablePending,
-        checkout: reusablePending.razorpayQrCodeId ? null : checkoutPayload(reusablePending, job, req),
-        qr: reusablePending.razorpayQrCodeId
-          ? { id: reusablePending.razorpayQrCodeId, imageUrl: reusablePending.qrImageUrl || "", closeBy: reusablePending.qrCloseBy || null }
-          : null
+        payment,
+        checkout: qrCode ? null : checkoutPayload(payment, job, req),
+        qr: qrCode ? { id: qrCode.id, imageUrl: qrCode.image_url, closeBy: qrCode.close_by || null } : null
       });
+    } finally {
+      paymentCreationLocks.delete(job.jobId);
+      releasePaymentCreationLock();
     }
-
-    // Prefer a direct UPI QR code - any payment app scans and pays it without
-    // a browser hop. Falls back to Orders + Checkout if the merchant account
-    // isn't enabled for the QR Codes product (e.g. still pending activation).
-    let qrCode = null;
-    try {
-      qrCode = await createRazorpayQrCode(amount, job);
-    } catch (error) {
-      qrCode = null;
-      console.error(`[razorpay] UPI QR code creation failed for job ${job.jobId}, falling back to Checkout: ${error.message}`);
-    }
-
-    let razorpayOrder = null;
-    if (!qrCode) {
-      try {
-        razorpayOrder = await razorpayRequest("POST", "/v1/orders", {
-          amount,
-          currency: "INR",
-          receipt: safeReceipt(job.jobId),
-          notes: {
-            jobId: job.jobId,
-            kioskId: job.kioskId,
-            service: job.service
-          }
-        });
-      } catch (error) {
-        return json(res, 502, { error: `Unable to create Razorpay order: ${error.message}` });
-      }
-    }
-
-    const payment = {
-      paymentId: `PAY-${Date.now()}`,
-      gateway: "razorpay",
-      jobId: job.jobId,
-      amount: job.amount,
-      amountInPaise: amount,
-      currency: "INR",
-      paymentMethod: qrCode ? "Razorpay UPI QR" : "Razorpay Checkout",
-      razorpayOrderId: razorpayOrder?.id || "",
-      razorpayQrCodeId: qrCode?.id || "",
-      qrImageUrl: qrCode?.image_url || "",
-      qrCloseBy: qrCode?.close_by || null,
-      razorpayMode: config.mode,
-      status: "Pending",
-      createdAt: new Date().toISOString()
-    };
-    db.payments.push(payment);
-    job.paymentStatus = "Payment Pending";
-    saveData();
-    return json(res, 201, {
-      job,
-      payment,
-      checkout: qrCode ? null : checkoutPayload(payment, job, req),
-      qr: qrCode ? { id: qrCode.id, imageUrl: qrCode.image_url, closeBy: qrCode.close_by || null } : null
-    });
   }
 
   if (req.method === "POST" && url.pathname === "/api/payment/verify") {
@@ -5301,12 +5367,9 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
 
   if (req.method === "GET" && url.pathname === "/api/admin/revenue") {
     const adminJobs = jobsForAdmin(adminSession);
-    const adminPayments = paymentsForJobs(adminJobs);
-    const adminRefunds = refundsForJobs(adminJobs, adminPayments);
     const adminServices = servicesForAdmin(adminSession);
     const gross = adminJobs.reduce((sum, job) => sum + (job.paymentStatus === "Payment Success" ? Number(job.amount || 0) : 0), 0);
-    const refunds = adminRefunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
-    return json(res, 200, { gross, refunds, net: gross - refunds, pricing: pricingForServices(adminServices, [...kioskIdsForAdmin(adminSession)]), services: adminServices, config: db.config });
+    return json(res, 200, { gross, net: gross, pricing: pricingForServices(adminServices, [...kioskIdsForAdmin(adminSession)]), services: adminServices, config: db.config });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/pricing") {
@@ -5324,18 +5387,13 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     return json(res, 200, { payments: paymentsForJobs(jobsForAdmin(adminSession)) });
   }
 
-  if (req.method === "GET" && url.pathname === "/api/admin/refunds") {
-    const adminJobs = jobsForAdmin(adminSession);
-    return json(res, 200, { refunds: refundsForJobs(adminJobs, paymentsForJobs(adminJobs)) });
-  }
-
   if (req.method === "GET" && url.pathname === "/api/admin/print-history") {
     return json(res, 200, { jobs: jobsForAdmin(adminSession) });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/reports") {
     return json(res, 200, {
-      reports: ["daily-sales", "monthly-sales", "failed-transactions", "refunds", "maintenance"]
+      reports: ["daily-sales", "monthly-sales", "failed-transactions", "maintenance"]
     });
   }
 
@@ -5462,10 +5520,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 409, { error: "Kiosk ID already exists. Use a unique kiosk ID." });
     }
 
-    if (setupCodeInUse(kiosk.setupCode)) {
-      return json(res, 409, { error: "Mini PC setup code already exists. Generate a new setup code." });
-    }
-
+    // Setup codes may repeat across kiosks (see validateSuperAdminRecord).
     db.kiosks.push(kiosk);
     db.kioskAdmins = db.kioskAdmins.map((admin) => {
       if (admin.adminId !== adminSession.adminId || !Array.isArray(admin.kioskIds) || !admin.kioskIds.length) {
@@ -5514,10 +5569,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 400, { error: "Mini PC setup code is required." });
     }
 
-    if (setupCodeInUse(kiosk.setupCode, db.kiosks[index].kioskId)) {
-      return json(res, 409, { error: "Mini PC setup code already exists. Generate a new setup code." });
-    }
-
+    // Setup codes may repeat across kiosks (see validateSuperAdminRecord).
     db.kiosks[index] = kiosk;
     touchConfig("kiosk-updated");
     saveSettings();
@@ -5622,29 +5674,6 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     return json(res, 200, { services: scopedServices, pricing: pricingForServices(scopedServices, [...kioskIdsForAdmin(adminSession)]), config: db.config });
   }
 
-  if (req.method === "POST" && url.pathname === "/api/admin/refund") {
-    const adminJobs = jobsForAdmin(adminSession);
-    const adminPayments = paymentsForJobs(adminJobs);
-    const canRefundJob = adminJobs.some((job) => String(job.jobId || "") === String(body.jobId || ""));
-    const canRefundPayment = adminPayments.some((payment) => String(payment.paymentId || "") === String(body.paymentId || ""));
-    if (!canRefundJob && !canRefundPayment) {
-      return json(res, 403, { error: "This refund is outside your assigned kiosks." });
-    }
-
-    const refund = {
-      refundId: `REF-${Date.now()}`,
-      jobId: body.jobId,
-      paymentId: body.paymentId,
-      amount: Number(body.amount || 0),
-      reason: body.reason || "Print failed",
-      status: "Refund Pending",
-      requestedAt: new Date().toISOString()
-    };
-    db.refunds.push(refund);
-    saveData();
-    return json(res, 201, { refund });
-  }
-
   if (req.method === "POST" && url.pathname.startsWith("/api/admin/reprint/")) {
     const job = findJob(url.pathname.split("/").pop());
     if (!job) return json(res, 404, { error: "Job not found" });
@@ -5655,6 +5684,10 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   }
 
   return json(res, 404, { error: "Route not found", path: url.pathname });
+ } catch (error) {
+  console.error("Unhandled request error:", req.url, error);
+  if (!res.headersSent) return json(res, 500, { error: "Internal server error" });
+ }
 });
 
 // ── Live admin push (WebSocket) ──────────────────────────────────────────────

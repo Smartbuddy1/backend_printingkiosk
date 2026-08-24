@@ -1,0 +1,373 @@
+{
+  "ea6838d02a6d887d2acb8ce04f30bf8c30c2bbb0fab8a5a9a0ae7c757b433d0b": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787230517255
+  },
+  "5a6a776435728c4db292923021fc881ddbbfc199c4285bc28f27c5f335151f92": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "",
+    "name": "Super Admin",
+    "expiresAt": 1787230533190
+  },
+  "1dd064da6aecedb3ec407d9374a2d80fe996b49f479ef5cbf33ffbe3b46e0cef": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "",
+    "name": "Super Admin",
+    "expiresAt": 1787230557557
+  },
+  "71ead852f26fa45b70dca2400dac3b9bdede4b822664c55e5e371ff377c9df41": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1787232158845
+  },
+  "534f15551d49818c4a8745b538d20dc7dcb9c55876aac10d54ea1341d92af9ad": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "",
+    "name": "Super Admin",
+    "expiresAt": 1787231934651
+  },
+  "1609b82cc83c35986e1110ee0cd32b4b4aefbd9c7ef04f03857617210de3c078": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "",
+    "name": "Super Admin",
+    "expiresAt": 1787232033024
+  },
+  "78e189db642d2eeda2908f3f6e98a41e3a2c4b0ef148d1cba44966f93660fe8c": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787236410297
+  },
+  "abee272dfa090e855412840f343b483850b0b7bb822173e8a8cd75dd76b2c78d": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787232248485
+  },
+  "b073f70100c02c8a54ea7b4670b62f26fcf9e617bf28b7e5e51e32a4cc441b86": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787232333851
+  },
+  "16f145dc2820e22206510d2deab2e5c8b9cf69da173eede96a77a37a3b01f5a0": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787232706459
+  },
+  "3aea02d9186b329be25a6801e0ea9f6c5b071d4e85425816e03c463f972e5450": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "",
+    "name": "Super Admin",
+    "expiresAt": 1787232695139
+  },
+  "6889b51bb8547f3935ee11e073ce9b11f70f6d61d8a07f01bc5b9ba473d0ae87": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787232776585
+  },
+  "4bac603bb84c830e2dbe8b5e4539e3db26c97ed68ca36ba145d6eb45d9a9cea7": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787232829610
+  },
+  "0fa207c369f2fe4a991c69c4f2eefe9dc4c3efd161d14666434b1c76a9b8ee19": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787232904254
+  },
+  "1918f8c1f13e152711cd691a06147ab82daf2a33ea51d2ac011979cfcb2df43e": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "",
+    "name": "Super Admin",
+    "expiresAt": 1787232894496
+  },
+  "e78145806b0e1a2f3fa91b43781ce7e7190b83260529b8b1040add7d0169ddcd": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787236414673
+  },
+  "9c3ede6aeb3913fccf84c447d5bf4798da006db0a13eae3afe4aa7d8edeb572a": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787236418844
+  },
+  "713e69756f2ddeff4382bb75a6372a558d28935cdd027f451f0290bcf8a28bc8": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787237416397
+  },
+  "c7d290dd6d7d5903f5dd9c5cbe2ba8f15abbe9e66f540e164aaef6d86939f510": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787237209297
+  },
+  "4602113c18ccd0c0137d3ffcd59b1f4ceba57964565966b7814057382088afc7": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787237339631
+  },
+  "5056ba724732a620e50ae8c0c7fade53be47e251e655bcddc3480b6ca18a9aed": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1787241886374
+  },
+  "da2a93c84e4e8930a912a7e80f98e881e45735c2f08b6a9846d2281e36e73b55": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787237613908
+  },
+  "1bf42da4366bb8b11b1ba788887c29dba52d662785a98141486b57c1da175abe": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787237896242
+  },
+  "f0aab1a036edb09954587f81bd24bf09ef2c9d058b80d1f6774c1b66b9774a2c": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787238034894
+  },
+  "f6ea6c05268614b4d4c2b1488bc84902a2dfc449008d8ed4adb72452c35189cd": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1787238174152
+  },
+  "6d76a85d538d2ab843d2a4ae0af731dc5dc200c79a39a7a5b0aa9e01dd892545": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787238243492
+  },
+  "5d7de09ebe2bee45e13ee667e468d6dbffa4061bb9364049cc2e996ad6a43e12": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787238438463
+  },
+  "9f3f1c8966f5f423c6e77bec88c36695cf6c9e37887eefea4068fc494ac07511": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787238466811
+  },
+  "eea9f07522492a259d97862f9d2c26043398fd5e24a29e29049c7fa8be94686a": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787241889717
+  },
+  "2d9ffd5b5c99e83162beaddb8de848d31f82f6fcebf17d5faced0213af2df6b1": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1787242904247
+  },
+  "462ea3920350b9896f76577bb0a6bce1e60ac29cc401c011e53342a70628e62b": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787242282572
+  },
+  "c26d4a9221216a51dd2937cb8e7320f02c0171a2c18cc77fe9e9716dac34f28a": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787242654456
+  },
+  "907cc1ef6bc2d4b34eeec3b0850306c0014288d19ecb3b3177849fafa6855c99": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787243844196
+  },
+  "39ccd4a1b7fc0064dd2641c5ebd798176553d9e468e3901bf167533639eeba9b": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787243132457
+  },
+  "89df709f9fc07408b5aec1b166656594f6d3023e5b695e657964a6e70fa7451b": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787243787997
+  },
+  "e84d97e7e73e9948b0e4c96d8c79bf9fb46da5b927e13979338f65746707285a": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1787254774373
+  },
+  "172d1924e563d0f579f09414077713c718ff9b34e6038008f17860ecf2194423": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787244089322
+  },
+  "c56fb9ea4000d91ab9950b9d86efe5c30d56b2face611c9862bc2c83903ba657": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787244432024
+  },
+  "dac9302cb4940f98ad9ea34447feeb1bc754e8e9e9b7a19c9ed241cda3bc07e3": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "",
+    "name": "Super Admin",
+    "expiresAt": 1787244399716
+  },
+  "3639ea49a370fb0f345ebb8366eddf5b712e50392143919fa1322be94f8d5108": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "",
+    "name": "Super Admin",
+    "expiresAt": 1787244468903
+  },
+  "9a67acd13b65ea09d4eab8252befd77dbdfdce4f46fe5ac03d819365609566f2": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787244780088
+  },
+  "9fe4ed4ba55f73f938bb290be955686b028aeff3e90b050fa87950af6db0ebed": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787245241557
+  },
+  "12343fb1c0ac19f810636233c678c5aa2446d738aac89eedc0a2346f8079db29": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787249914717
+  },
+  "be31c475e892cacab530ee3153bf20eef5e63574a2f935a3863467289fa3c253": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787250059398
+  },
+  "b2a5582bafe83678f6be5523093fad8b53cfdd5a54e5d246866e70507ca7ce38": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787254365280
+  },
+  "491233769b5cb34b646715864ef813bda20af5b90dab576132ef8a75c547b2fb": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787254544086
+  },
+  "f005e169a376062520e87686a74e358d1de2d64c2bd7590c96ed4069e7ac25b9": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787257976521
+  },
+  "f2865c063fc403dbc3426dea92233074fbe4f3fc54a4cd75489beecb6a66fb25": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787255146759
+  },
+  "6ec8303822642f87435a34581d2b042bb905b3389117b5adab48e53f305d2081": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787255296324
+  },
+  "65dcd65fe6ca7d70da173b7a983bc2fdaeaee7cade2839d5efa6b2351ac30024": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787257709159
+  },
+  "91855420d3534293e87918fe101dff497f8a722adb2eb1072f8d27cf189e0945": {
+    "role": "kiosk-admin",
+    "adminId": "default-admin",
+    "email": "admin@gmail.com",
+    "name": "Kiosk Admin",
+    "expiresAt": 1787257710297
+  },
+  "62604c484cb129def1a80fd4ec979fcdf7581aea9d5f19474b48e930d9461756": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin",
+    "name": "Super Admin",
+    "expiresAt": 1787257959889
+  },
+  "4fa608607d2d18b59b2f60950f75d7b13b85db9aaebe9b285575ab204557dde9": {
+    "role": "super-admin",
+    "adminId": "",
+    "email": "superadmin@printingkiosk.local",
+    "name": "Super Admin",
+    "expiresAt": 1787257988543
+  }
+}

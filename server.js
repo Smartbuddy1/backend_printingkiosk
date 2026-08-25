@@ -3640,7 +3640,7 @@ function compareReleaseVersions(left, right) {
 
 function normalizeKioskRelease(record = {}, existing = {}) {
   const next = { ...existing, ...record };
-  const version = normalizeReleaseVersion(existing.version || next.version);
+  const version = normalizeReleaseVersion(next.version || existing.version);
   if (!version) return null;
 
   const channel = String(next.channel || "production").trim().toLowerCase() === "staging"

@@ -2998,7 +2998,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           .eyebrow{align-items:center;background:#eaf2ff;border:1px solid #cfe0ff;border-radius:999px;color:var(--blue);display:inline-flex;font-size:12px;font-weight:800;letter-spacing:.08em;padding:7px 11px;text-transform:uppercase;}
           h1{font-size:clamp(27px,7vw,34px);letter-spacing:-.035em;line-height:1.1;margin:14px 0 9px;}
           .lead{color:var(--muted);font-size:15px;line-height:1.55;margin:0 auto;max-width:370px;}
-          .card-body{padding:24px 26px 28px;}
+          .card-body{-webkit-overflow-scrolling:touch;max-height:min(64vh,540px);overflow-y:auto;padding:24px 26px 28px;}
           .steps{display:grid;gap:8px;grid-template-columns:repeat(3,1fr);margin-bottom:20px;}
           .step{align-items:center;color:var(--muted);display:flex;font-size:11px;font-weight:700;gap:6px;justify-content:center;text-align:center;}
           .step span{align-items:center;background:#edf3fb;border-radius:50%;color:var(--blue);display:inline-flex;flex:0 0 22px;height:22px;justify-content:center;}
@@ -3029,6 +3029,14 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           .submit{background:linear-gradient(135deg,var(--blue),var(--blue-dark));border:0;border-radius:14px;box-shadow:0 13px 26px rgba(23,105,245,.22);color:#fff;font:inherit;font-size:16px;font-weight:800;min-height:54px;padding:0 20px;transition:opacity .18s,transform .18s;width:100%;}
           .submit:not(:disabled):active{transform:translateY(1px);}
           .submit:disabled{box-shadow:none;cursor:not-allowed;opacity:.45;}
+          .submit-bar{background:linear-gradient(180deg,rgba(255,255,255,0),#fff 22%);bottom:0;display:grid;gap:9px;padding-bottom:2px;padding-top:14px;position:sticky;z-index:3;}
+          .progress{display:grid;gap:7px;margin-top:-2px;}
+          .progress[hidden]{display:none;}
+          .progress-track{background:#e3ebf7;border-radius:999px;height:8px;overflow:hidden;position:relative;}
+          .progress-fill{background:linear-gradient(90deg,var(--blue),var(--green));border-radius:999px;height:100%;transition:width .2s ease;width:0%;}
+          .progress-fill.indeterminate{animation:progress-pulse 1.1s ease-in-out infinite;background:linear-gradient(90deg,var(--blue),#34a8f4,var(--blue));background-size:250% 100%;width:100%;}
+          .progress-label{color:var(--muted);font-size:12px;font-weight:700;text-align:center;}
+          @keyframes progress-pulse{0%{background-position:0% 0;}100%{background-position:-250% 0;}}
           .footer{color:#718096;font-size:11px;line-height:1.5;margin:15px auto 0;max-width:390px;text-align:center;}
           .status{align-items:center;display:flex;flex-direction:column;padding:12px 0 4px;text-align:center;}
           .status-icon{align-items:center;background:#e8f8f1;border:1px solid #b9ead3;border-radius:50%;color:var(--green);display:flex;font-size:34px;font-weight:800;height:76px;justify-content:center;margin-bottom:18px;width:76px;}
@@ -3228,6 +3236,9 @@ function renderMobileUploadPage(session) {
       var message      = document.getElementById('message');
       var clearButton  = document.getElementById('clear-files');
       var submitButton = document.getElementById('submit-button');
+      var progress      = document.getElementById('progress');
+      var progressFill  = document.getElementById('progress-fill');
+      var progressLabel = document.getElementById('progress-label');
       var cardHead     = document.querySelector('.card-head');
       var cardBody     = document.querySelector('.card-body');
       var poller       = null;
@@ -3238,12 +3249,37 @@ function renderMobileUploadPage(session) {
         message.hidden = !text;
       }
 
+      /* ── upload progress bar ─────────────────── */
+      function setProgress(pct) {
+        pct = Math.max(0, Math.min(100, pct));
+        progressFill.classList.remove('indeterminate');
+        progressFill.style.width = pct + '%';
+        progressLabel.textContent = 'Uploading… ' + pct + '%';
+      }
+
+      function setProgressIndeterminate(label) {
+        progressFill.classList.add('indeterminate');
+        progressLabel.textContent = label;
+      }
+
+      function showProgress() {
+        progress.hidden = false;
+        setProgress(0);
+      }
+
+      function hideProgress() {
+        progress.hidden = true;
+        progressFill.classList.remove('indeterminate');
+        progressFill.style.width = '0%';
+      }
+
       function resetFiles() {
         input.value = '';
         selection.hidden = true;
         zone.classList.remove('selected');
         submitButton.disabled = true;
         list.replaceChildren();
+        hideProgress();
       }
 
       /* ── PDF page-count limit (must match MAX_UPLOAD_PAGES_PER_DOCUMENT in
@@ -3395,7 +3431,13 @@ function renderMobileUploadPage(session) {
         if (note)  note.innerHTML    = 'Return to the kiosk and tap <strong>Back</strong> to generate a fresh QR code, then scan it with your phone.';
       }
 
-      /* ── AJAX submit ─────────────────────────── */
+      /* ── AJAX submit ─────────────────────── */
+      function resetSubmitState() {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Send to Print Kiosk';
+        hideProgress();
+      }
+
       form.addEventListener('submit', function (e) {
         e.preventDefault();
 
@@ -3403,32 +3445,44 @@ function renderMobileUploadPage(session) {
         if (!files.length) { showError('Please choose at least one file.'); return; }
 
         submitButton.disabled = true;
-        submitButton.textContent = 'Sending securely\u2026';
+        submitButton.textContent = 'Sending securely…';
         showError('');
+        showProgress();
 
         var fd = new FormData(form);
 
-        fetch('/mobile-upload/' + TOKEN + '/upload', {
-          method: 'POST',
-          body: fd
-        })
-        .then(function (r) {
-          if (r.ok || r.status === 409) {
+        // XMLHttpRequest (not fetch) so we get real upload progress events -
+        // fetch has no cross-browser upload progress API, which is why the
+        // page previously showed no progress feedback while sending.
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/mobile-upload/' + TOKEN + '/upload');
+
+        xhr.upload.addEventListener('progress', function (evt) {
+          if (evt.lengthComputable) {
+            setProgress(Math.round((evt.loaded / evt.total) * 100));
+          }
+        });
+        xhr.upload.addEventListener('load', function () {
+          // All bytes are sent; the server is still parsing/validating them.
+          setProgressIndeterminate('Finishing up…');
+        });
+
+        xhr.onload = function () {
+          if ((xhr.status >= 200 && xhr.status < 300) || xhr.status === 409) {
             // 200 = accepted, 409 = already used (treat both as done)
+            setProgress(100);
             showSentView(files.length);
           } else {
-            return r.text().then(function () {
-              showError('Upload failed. Please try again.');
-              submitButton.disabled = false;
-              submitButton.textContent = 'Send to Print Kiosk';
-            });
+            showError('Upload failed. Please try again.');
+            resetSubmitState();
           }
-        })
-        .catch(function () {
+        };
+        xhr.onerror = function () {
           showError('Network error. Check your connection and try again.');
-          submitButton.disabled = false;
-          submitButton.textContent = 'Send to Print Kiosk';
-        });
+          resetSubmitState();
+        };
+
+        xhr.send(fd);
       });
     })();
   `;
@@ -3457,7 +3511,13 @@ function renderMobileUploadPage(session) {
           <ul class="file-list" id="file-list"></ul>
         </div>
         <p class="privacy">Files are securely linked to this kiosk session and are not shown to other users.</p>
-        <button class="submit" id="submit-button" type="submit" disabled>Send to Print Kiosk</button>
+        <div class="submit-bar">
+          <button class="submit" id="submit-button" type="submit" disabled>Send to Print Kiosk</button>
+          <div class="progress" id="progress" hidden>
+            <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+            <div class="progress-label" id="progress-label">Uploading… 0%</div>
+          </div>
+        </div>
       </form>
     `,
     script

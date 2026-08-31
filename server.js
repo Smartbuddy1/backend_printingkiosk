@@ -2797,6 +2797,7 @@ async function createMobileUploadSession(req) {
     status: "waiting",
     file: null,
     files: [],
+    stagedFiles: [],
     createdAt: new Date().toISOString()
   };
 
@@ -2933,6 +2934,59 @@ function parseMultipartFiles(buffer, contentType) {
     });
 }
 
+// Shared by the stage and confirm mobile-upload routes so the two never
+// drift out of sync on what a valid document is.
+function validateUploadedFiles(files) {
+  if (!files.length || files.length > MAX_FILES_PER_JOB) {
+    return {
+      status: 400,
+      title: "Upload failed",
+      heading: "We could not send those files",
+      description: `Choose between 1 and ${MAX_FILES_PER_JOB} valid documents and try again from a fresh kiosk QR code.`,
+      note: "Nothing was added to the print session."
+    };
+  }
+
+  const unsupportedFile = files.find((file) => !CUSTOMER_UPLOAD_EXTENSIONS.has(file.extension));
+  if (unsupportedFile) {
+    return {
+      status: 400,
+      title: "Unsupported file",
+      heading: "That file type is not supported",
+      description: "Print Kiosk accepts PDF, JPG, JPEG, and PNG documents from this mobile upload page.",
+      note: "Nothing was added to the print session."
+    };
+  }
+
+  const oversizedFile = files.find((file) => file.size > MAX_UPLOAD_FILE_SIZE_BYTES);
+  if (oversizedFile) {
+    return {
+      status: 400,
+      title: "File too large",
+      heading: "That document is too large",
+      description: `"${oversizedFile.name}" is ${(oversizedFile.size / (1024 * 1024)).toFixed(1)} MB. This kiosk allows up to 10 MB per document.`,
+      note: "Nothing was added to the print session. Choose a smaller file and try again."
+    };
+  }
+
+  const oversizedPdf = files.find((file) => {
+    if (file.extension !== "PDF") return false;
+    const pages = estimatePdfPageCount(file.content);
+    return pages && pages > MAX_UPLOAD_PAGES_PER_DOCUMENT;
+  });
+  if (oversizedPdf) {
+    return {
+      status: 400,
+      title: "Too many pages",
+      heading: "That document has too many pages",
+      description: `"${oversizedPdf.name}" has too many pages. This kiosk allows up to ${MAX_UPLOAD_PAGES_PER_DOCUMENT} pages per document.`,
+      note: "Nothing was added to the print session. Choose a shorter document and try again."
+    };
+  }
+
+  return null;
+}
+
 // Embedded as a data URI (not a URL to /assets/...) so the logo always
 // renders regardless of PUBLIC_FRONTEND_URL config or whether this backend's
 // deployment happens to serve the frontend's static files alongside itself.
@@ -3035,6 +3089,8 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           .progress-track{background:#e3ebf7;border-radius:999px;height:8px;overflow:hidden;position:relative;}
           .progress-fill{background:linear-gradient(90deg,var(--blue),var(--green));border-radius:999px;height:100%;transition:width .2s ease;width:0%;}
           .progress-fill.indeterminate{animation:progress-pulse 1.1s ease-in-out infinite;background:linear-gradient(90deg,var(--blue),#34a8f4,var(--blue));background-size:250% 100%;width:100%;}
+          .progress-fill.done{background:var(--green);}
+          .progress-label.done{color:var(--green);}
           .progress-label{color:var(--muted);font-size:12px;font-weight:700;text-align:center;}
           @keyframes progress-pulse{0%{background-position:0% 0;}100%{background-position:-250% 0;}}
           .footer{color:#718096;font-size:11px;line-height:1.5;margin:15px auto 0;max-width:390px;text-align:center;}
@@ -3243,6 +3299,34 @@ function renderMobileUploadPage(session) {
       var cardBody     = document.querySelector('.card-body');
       var poller       = null;
 
+      // Files are staged (uploaded to the server) the instant they pass
+      // client-side checks, well before the visitor taps "Send to Print
+      // Kiosk" - see beginStaging(). isStaged only turns true once that
+      // transfer has actually finished, which is what gates the submit
+      // button: tapping Send never re-uploads, it just confirms.
+      var stageXhr       = null;
+      var stagingToken   = 0;
+      var isStaged       = false;
+
+      // The <input type=file multiple> element replaces its own FileList
+      // every time it's reopened - picking a second document natively
+      // wipes out the first. selectedFiles is the app's own running list
+      // that survives across repeated picks; each change event merges into
+      // it instead of overwriting it (see the input 'change' handler below).
+      var selectedFiles = [];
+
+      function dedupeFiles(files) {
+        var seen = [];
+        return files.filter(function (f) {
+          var isDup = seen.some(function (s) {
+            return s.name === f.name && s.size === f.size && s.lastModified === f.lastModified;
+          });
+          if (isDup) return false;
+          seen.push(f);
+          return true;
+        });
+      }
+
       /* ── helpers ─────────────────────────────── */
       function showError(text) {
         message.textContent = text;
@@ -3252,13 +3336,24 @@ function renderMobileUploadPage(session) {
       /* ── upload progress bar ─────────────────── */
       function setProgress(pct) {
         pct = Math.max(0, Math.min(100, pct));
-        progressFill.classList.remove('indeterminate');
+        progressFill.classList.remove('indeterminate', 'done');
+        progressLabel.classList.remove('done');
         progressFill.style.width = pct + '%';
         progressLabel.textContent = 'Uploading… ' + pct + '%';
       }
 
       function setProgressIndeterminate(label) {
+        progressFill.classList.remove('done');
         progressFill.classList.add('indeterminate');
+        progressLabel.classList.remove('done');
+        progressLabel.textContent = label;
+      }
+
+      function setProgressDone(label) {
+        progressFill.classList.remove('indeterminate');
+        progressFill.classList.add('done');
+        progressFill.style.width = '100%';
+        progressLabel.classList.add('done');
         progressLabel.textContent = label;
       }
 
@@ -3269,15 +3364,20 @@ function renderMobileUploadPage(session) {
 
       function hideProgress() {
         progress.hidden = true;
-        progressFill.classList.remove('indeterminate');
+        progressFill.classList.remove('indeterminate', 'done');
         progressFill.style.width = '0%';
       }
 
       function resetFiles() {
+        stagingToken += 1;
+        if (stageXhr) { stageXhr.abort(); stageXhr = null; }
+        isStaged = false;
+        selectedFiles = [];
         input.value = '';
         selection.hidden = true;
         zone.classList.remove('selected');
         submitButton.disabled = true;
+        submitButton.textContent = 'Send to Print Kiosk';
         list.replaceChildren();
         hideProgress();
       }
@@ -3334,27 +3434,94 @@ function renderMobileUploadPage(session) {
         }
         selection.hidden = false;
         zone.classList.add('selected');
-        submitButton.disabled = false;
+        beginStaging(files);
+      }
+
+      /* ── stage: upload to the server the instant files are chosen,
+         ahead of the visitor tapping Send ────────── */
+      function beginStaging(files) {
+        if (stageXhr) { stageXhr.abort(); stageXhr = null; }
+        isStaged = false;
+
+        var myToken = (stagingToken += 1);
+
+        submitButton.disabled = true;
+        submitButton.textContent = 'Uploading…';
+        showProgress();
+
+        var fd = new FormData();
+        files.forEach(function (f) { fd.append('documents', f, f.name); });
+
+        var xhr = new XMLHttpRequest();
+        stageXhr = xhr;
+        xhr.open('POST', '/mobile-upload/' + TOKEN + '/stage');
+
+        xhr.upload.addEventListener('progress', function (evt) {
+          if (evt.lengthComputable) {
+            setProgress(Math.round((evt.loaded / evt.total) * 100));
+          }
+        });
+        xhr.upload.addEventListener('load', function () {
+          setProgressIndeterminate('Finishing up…');
+        });
+
+        xhr.onload = function () {
+          if (myToken !== stagingToken) return; // superseded by a newer selection
+          var data = {};
+          try { data = JSON.parse(xhr.responseText || '{}'); } catch (err) {}
+
+          if (xhr.status >= 200 && xhr.status < 300 && data.staged) {
+            isStaged = true;
+            setProgressDone('Uploaded ✓ Ready to send');
+            submitButton.disabled = false;
+            submitButton.textContent = 'Send to Print Kiosk';
+          } else {
+            isStaged = false;
+            hideProgress();
+            showError(data.error || 'Upload failed. Please try again.');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Send to Print Kiosk';
+          }
+        };
+        xhr.onerror = function () {
+          if (myToken !== stagingToken) return;
+          isStaged = false;
+          hideProgress();
+          showError('Network error. Check your connection and try again.');
+          submitButton.disabled = true;
+          submitButton.textContent = 'Send to Print Kiosk';
+        };
+
+        xhr.send(fd);
       }
 
       /* ── file picker ─────────────────────────── */
+      // On a rejected pick, only wipe the selection if there wasn't a good
+      // one already - otherwise the visitor loses files they'd already
+      // chosen just because the *next* pick was invalid.
+      function rejectPick(errorText) {
+        showError(errorText);
+        if (selectedFiles.length) {
+          submitButton.disabled = !isStaged;
+        } else {
+          resetFiles();
+        }
+      }
+
       function applySelectedFiles(files) {
         showError('');
 
         if (files.length > MAX) {
-          resetFiles();
-          showError('Choose no more than ' + MAX + ' files.');
+          rejectPick('Choose no more than ' + MAX + ' files.');
           return;
         }
         if (files.some(function (f) { return !supported.test(f.name); })) {
-          resetFiles();
-          showError('Only PDF, JPG, JPEG, and PNG files are supported.');
+          rejectPick('Only PDF, JPG, JPEG, and PNG files are supported.');
           return;
         }
         var oversizedFile = files.find(function (f) { return f.size > MAX_FILE_SIZE_BYTES; });
         if (oversizedFile) {
-          resetFiles();
-          showError(oversizedFile.name + ' is too large (' + (oversizedFile.size / (1024 * 1024)).toFixed(1) + ' MB). This kiosk allows up to 10 MB per document.');
+          rejectPick(oversizedFile.name + ' is too large (' + (oversizedFile.size / (1024 * 1024)).toFixed(1) + ' MB). This kiosk allows up to 10 MB per document.');
           return;
         }
         if (!files.length) { resetFiles(); return; }
@@ -3364,17 +3531,25 @@ function renderMobileUploadPage(session) {
 
         checkPdfPageLimits(files).then(function (pageError) {
           if (pageError) {
-            resetFiles();
-            showError(pageError);
+            rejectPick(pageError);
             return;
           }
           showError('');
+          selectedFiles = files;
           finalizeSelection(files);
         });
       }
 
       input.addEventListener('change', function () {
-        applySelectedFiles(Array.from(input.files || []));
+        var newFiles = Array.from(input.files || []);
+        // Reset the native picker immediately: our own selectedFiles array
+        // is now the source of truth, and clearing this lets the same file
+        // be picked again later (e.g. after removing it) and keeps the
+        // browser's own "N files" chrome from lingering out of sync.
+        input.value = '';
+        if (!newFiles.length) return; // picker was cancelled - keep the existing selection
+
+        applySelectedFiles(dedupeFiles(selectedFiles.concat(newFiles)));
       });
 
       clearButton.addEventListener('click', resetFiles);
@@ -3431,49 +3606,36 @@ function renderMobileUploadPage(session) {
         if (note)  note.innerHTML    = 'Return to the kiosk and tap <strong>Back</strong> to generate a fresh QR code, then scan it with your phone.';
       }
 
-      /* ── AJAX submit ─────────────────────── */
+      /* ── AJAX submit: confirm only - files are already on the server
+         from beginStaging(), so this just hands them to the kiosk. ─── */
       function resetSubmitState() {
-        submitButton.disabled = false;
+        submitButton.disabled = !isStaged;
         submitButton.textContent = 'Send to Print Kiosk';
-        hideProgress();
       }
 
       form.addEventListener('submit', function (e) {
         e.preventDefault();
 
-        var files = Array.from(input.files || []);
+        var files = selectedFiles;
         if (!files.length) { showError('Please choose at least one file.'); return; }
+        if (!isStaged) { showError('Please wait for the upload to finish.'); return; }
 
         submitButton.disabled = true;
-        submitButton.textContent = 'Sending securely…';
+        submitButton.textContent = 'Sending…';
         showError('');
-        showProgress();
 
-        var fd = new FormData(form);
-
-        // XMLHttpRequest (not fetch) so we get real upload progress events -
-        // fetch has no cross-browser upload progress API, which is why the
-        // page previously showed no progress feedback while sending.
+        // No file bytes in this request - they were already staged. The
+        // server just promotes the staged files, so this resolves almost
+        // instantly regardless of file size or connection speed.
         var xhr = new XMLHttpRequest();
         xhr.open('POST', '/mobile-upload/' + TOKEN + '/upload');
-
-        xhr.upload.addEventListener('progress', function (evt) {
-          if (evt.lengthComputable) {
-            setProgress(Math.round((evt.loaded / evt.total) * 100));
-          }
-        });
-        xhr.upload.addEventListener('load', function () {
-          // All bytes are sent; the server is still parsing/validating them.
-          setProgressIndeterminate('Finishing up…');
-        });
 
         xhr.onload = function () {
           if ((xhr.status >= 200 && xhr.status < 300) || xhr.status === 409) {
             // 200 = accepted, 409 = already used (treat both as done)
-            setProgress(100);
             showSentView(files.length);
           } else {
-            showError('Upload failed. Please try again.');
+            showError('Sending failed. Please try again.');
             resetSubmitState();
           }
         };
@@ -3482,7 +3644,7 @@ function renderMobileUploadPage(session) {
           resetSubmitState();
         };
 
-        xhr.send(fd);
+        xhr.send();
       });
     })();
   `;
@@ -5061,6 +5223,43 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     return html(res, 200, renderMobileUploadPage(mobileUploadSessions.get(token)));
   }
 
+  // Phone -> server transfer only. Runs the instant a file passes the
+  // client-side checks (see the mobile-upload page script) so the bytes are
+  // already sitting on the server, staged against this token, well before
+  // the visitor taps "Send to Print Kiosk". Nothing here is visible to the
+  // kiosk yet - the kiosk only ever polls session.status, and this route
+  // never sets it past "staged".
+  if (req.method === "POST" && url.pathname.startsWith("/mobile-upload/") && url.pathname.endsWith("/stage")) {
+    const token = url.pathname.split("/")[2];
+    const session = mobileUploadSessions.get(token);
+
+    if (!session) {
+      return json(res, 404, { error: "This upload link has expired. Go back to the kiosk for a new QR code." });
+    }
+
+    if (session.status === "uploaded") {
+      return json(res, 409, { error: "This upload session has already been used. Go back to the kiosk and tap Back to get a new QR code." });
+    }
+
+    const files = parseMultipartFiles(await readRawBody(req), req.headers["content-type"] || "");
+    const validationError = validateUploadedFiles(files);
+    if (validationError) {
+      return json(res, validationError.status, { error: validationError.description });
+    }
+
+    session.status = "staged";
+    session.stagedFiles = files;
+    session.stagedAt = new Date().toISOString();
+
+    return json(res, 200, { staged: true, count: files.length });
+  }
+
+  // Server -> kiosk handoff. This is what the kiosk's poller actually reacts
+  // to (status flips to "uploaded" here, never in /stage above). When the
+  // files were already staged, this call carries no file bytes - it just
+  // promotes them, so tapping "Send to Print Kiosk" is near-instant instead
+  // of re-uploading everything. A direct multipart POST straight to this
+  // route (no prior /stage call) is still honored for backward compatibility.
   if (req.method === "POST" && url.pathname.startsWith("/mobile-upload/") && url.pathname.endsWith("/upload")) {
     const token = url.pathname.split("/")[2];
     const session = mobileUploadSessions.get(token);
@@ -5082,58 +5281,20 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       }));
     }
 
-    const files = parseMultipartFiles(await readRawBody(req), req.headers["content-type"] || "");
-
-    if (!files.length || files.length > MAX_FILES_PER_JOB) {
-      return html(res, 400, renderMobileStatusPage({
-        title: "Upload failed",
-        heading: "We could not send those files",
-        description: `Choose between 1 and ${MAX_FILES_PER_JOB} valid documents and try again from a fresh kiosk QR code.`,
-        note: "Nothing was added to the print session.",
-        warning: true
-      }));
+    let files = Array.isArray(session.stagedFiles) && session.stagedFiles.length ? session.stagedFiles : null;
+    if (!files) {
+      files = parseMultipartFiles(await readRawBody(req), req.headers["content-type"] || "");
     }
 
-    const unsupportedFile = files.find((file) => !CUSTOMER_UPLOAD_EXTENSIONS.has(file.extension));
-    if (unsupportedFile) {
-      return html(res, 400, renderMobileStatusPage({
-        title: "Unsupported file",
-        heading: "That file type is not supported",
-        description: "Print Kiosk accepts PDF, JPG, JPEG, and PNG documents from this mobile upload page.",
-        note: "Nothing was added to the print session.",
-        warning: true
-      }));
-    }
-
-    const oversizedFile = files.find((file) => file.size > MAX_UPLOAD_FILE_SIZE_BYTES);
-    if (oversizedFile) {
-      return html(res, 400, renderMobileStatusPage({
-        title: "File too large",
-        heading: "That document is too large",
-        description: `"${oversizedFile.name}" is ${(oversizedFile.size / (1024 * 1024)).toFixed(1)} MB. This kiosk allows up to 10 MB per document.`,
-        note: "Nothing was added to the print session. Choose a smaller file and try again.",
-        warning: true
-      }));
-    }
-
-    const oversizedPdf = files.find((file) => {
-      if (file.extension !== "PDF") return false;
-      const pages = estimatePdfPageCount(file.content);
-      return pages && pages > MAX_UPLOAD_PAGES_PER_DOCUMENT;
-    });
-    if (oversizedPdf) {
-      return html(res, 400, renderMobileStatusPage({
-        title: "Too many pages",
-        heading: "That document has too many pages",
-        description: `"${oversizedPdf.name}" has too many pages. This kiosk allows up to ${MAX_UPLOAD_PAGES_PER_DOCUMENT} pages per document.`,
-        note: "Nothing was added to the print session. Choose a shorter document and try again.",
-        warning: true
-      }));
+    const validationError = validateUploadedFiles(files);
+    if (validationError) {
+      return html(res, validationError.status, renderMobileStatusPage({ ...validationError, warning: true }));
     }
 
     session.status = "uploaded";
     session.files = files;
     session.file = files[0];
+    session.stagedFiles = [];
     session.uploadedAt = new Date().toISOString();
 
     return html(res, 200, renderMobileStatusPage({

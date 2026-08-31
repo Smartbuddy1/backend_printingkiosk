@@ -31,7 +31,7 @@
         "range": "all"
       },
       "pricing": {
-        "bw": 7,
+        "bw": 3,
         "color": 12
       },
       "templates": [
@@ -179,7 +179,7 @@
   ],
   "pricing": {
     "govt-form": {
-      "bw": 7,
+      "bw": 3,
       "color": 12
     },
     "service-18220": {
@@ -189,16 +189,20 @@
     "__kiosks": {
       "KIOSK-NB07": {
         "govt-form": {
-          "bw": 55,
+          "bw": 99,
           "color": 12
+        },
+        "service-18220": {
+          "bw": 2,
+          "color": 10
         }
       }
     }
   },
   "config": {
-    "version": 1786428664763,
-    "updatedAt": "2026-08-11T06:11:04.763Z",
-    "reason": "pricing-updated"
+    "version": 1788068663383,
+    "updatedAt": "2026-08-30T05:44:23.383Z",
+    "reason": "services-updated"
   },
-  "updatedAt": "2026-08-11T06:11:04.763Z"
+  "updatedAt": "2026-08-30T05:44:23.383Z"
 }

@@ -769,11 +769,19 @@ function clonedDataSnapshot() {
   return JSON.parse(JSON.stringify(dataSnapshot()));
 }
 
+// Resolves with { ok, error } instead of ever throwing/rejecting - a save
+// that ultimately fails must never break databaseSaveQueue for every save
+// after it (that chain is shared across the whole process), and every
+// existing call site of saveData()/saveSettings() calls them without
+// awaiting the result, so this must never produce an unhandled rejection
+// either. Callers that care whether THIS specific save landed (see
+// saveSuperAdminCollection() below) can await the returned promise and check
+// .ok; callers that don't await it keep working exactly as before.
 async function persistSnapshotWithRetry(snapshot, maxAttempts = 3) {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       await rdsStore.saveSnapshot(snapshot);
-      return;
+      return { ok: true };
     } catch (error) {
       if (attempt === maxAttempts) {
         // Data (including alert logs) stays in the in-memory db either way and
@@ -781,7 +789,7 @@ async function persistSnapshotWithRetry(snapshot, maxAttempts = 3) {
         // here isn't permanent data loss on its own - but log loudly since a
         // save that never recovers before a server restart would lose it.
         console.error(`RDS save failed after ${maxAttempts} attempts: ${error.message}`);
-        return;
+        return { ok: false, error };
       }
       console.warn(`RDS save attempt ${attempt} failed, retrying: ${error.message}`);
       await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
@@ -790,16 +798,17 @@ async function persistSnapshotWithRetry(snapshot, maxAttempts = 3) {
 }
 
 function persistDatabaseSnapshot() {
-  if (!rdsStore.enabled()) return;
+  if (!rdsStore.enabled()) return Promise.resolve({ ok: true });
 
   const snapshot = clonedDataSnapshot();
-  databaseSaveQueue = databaseSaveQueue.then(() => persistSnapshotWithRetry(snapshot));
+  const attempt = databaseSaveQueue.then(() => persistSnapshotWithRetry(snapshot));
+  databaseSaveQueue = attempt;
+  return attempt;
 }
 
 function saveSettings() {
   if (rdsStore.enabled()) {
-    persistDatabaseSnapshot();
-    return;
+    return persistDatabaseSnapshot();
   }
 
   writeJsonAtomic(SETTINGS_PATH, {
@@ -808,16 +817,16 @@ function saveSettings() {
     config: db.config,
     updatedAt: db.config.updatedAt
   });
+  return Promise.resolve({ ok: true });
 }
 
 function saveData() {
-  if (rdsStore.enabled()) {
-    persistDatabaseSnapshot();
-  } else {
-    writeJsonAtomic(DATA_PATH, dataSnapshot());
-  }
+  const result = rdsStore.enabled()
+    ? persistDatabaseSnapshot()
+    : (writeJsonAtomic(DATA_PATH, dataSnapshot()), Promise.resolve({ ok: true }));
 
   broadcastDataChanged();
+  return result;
 }
 
 function serviceRates(serviceId, kioskId = "") {
@@ -1173,6 +1182,68 @@ function binary(res, status, body, contentType, options = {}) {
   if (options.cacheControl) headers["Cache-Control"] = options.cacheControl;
   res.writeHead(status, headers);
   res.end(body);
+}
+
+// Streams a file from disk with HTTP Range support (RFC 7233) - needed for
+// reliable <video> playback in Chromium/Electron. A plain <img> GET never
+// sends a Range header, so binary() above (always a flat 200, whole body)
+// works fine for every one of its other current callers (images, PDFs,
+// logos) and is intentionally left untouched. But Chromium's <video> element
+// issues a Range request to probe a video's metadata before committing to
+// (auto)play, and a server that ignores it and always answers 200 instead of
+// 206 is a well-documented cause of <video> silently stalling or never
+// starting - exactly the idle-screensaver video symptom this fixes. Falls
+// back to a full 200 response for anything other than a single, well-formed
+// byte range, so it can never behave worse than the old always-200 code.
+function sendFileWithRangeSupport(req, res, filePath, contentType, options = {}) {
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return json(res, 404, { error: "File not found" });
+  }
+
+  const totalSize = stat.size;
+  const headers = {
+    "Content-Type": contentType || "application/octet-stream",
+    "Accept-Ranges": "bytes",
+    "Access-Control-Allow-Origin": "*"
+  };
+  if (options.cacheControl) headers["Cache-Control"] = options.cacheControl;
+
+  const sendFull = () => {
+    res.writeHead(200, { ...headers, "Content-Length": totalSize });
+    fs.createReadStream(filePath).pipe(res);
+  };
+
+  const range = String(req.headers.range || "").trim();
+  if (!range) return sendFull();
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  const hasStart = Boolean(match?.[1]);
+  const hasEnd = Boolean(match?.[2]);
+  if (!match || (!hasStart && !hasEnd)) return sendFull();
+
+  let start;
+  let end;
+  if (hasStart) {
+    start = parseInt(match[1], 10);
+    end = hasEnd ? parseInt(match[2], 10) : totalSize - 1;
+  } else {
+    start = Math.max(0, totalSize - parseInt(match[2], 10));
+    end = totalSize - 1;
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start < 0 || end >= totalSize) {
+    return sendFull();
+  }
+
+  res.writeHead(206, {
+    ...headers,
+    "Content-Range": `bytes ${start}-${end}/${totalSize}`,
+    "Content-Length": end - start + 1
+  });
+  fs.createReadStream(filePath, { start, end }).pipe(res);
 }
 
 // Uploaded client-logo/service-image/idle-media filenames are already
@@ -3987,7 +4058,12 @@ function syncServiceSavePricing(pricing = null) {
   }));
 }
 
-function saveSuperAdminCollection(collection) {
+// Returns { ok, error } from the final, most complete save (saveData()'s
+// snapshot already includes everything saveSettings() would have captured),
+// so a caller can await this and know whether the edit it just made actually
+// persisted - see handleSuperAdminCollection() below, which rolls back and
+// reports an error to the admin instead of a false "saved" when it didn't.
+async function saveSuperAdminCollection(collection) {
   if (collection === "services" || collection === "pricing" || collection === "kiosks") {
     if (collection === "services") {
       syncServiceSavePricing();
@@ -3996,15 +4072,15 @@ function saveSuperAdminCollection(collection) {
     }
     touchConfig(`${collection}-updated`);
     if (collection === "services" || collection === "pricing") {
-      saveSettings();
+      await saveSettings();
     }
   } else if (collection === "admins") {
     // Bump config version when client brand/logo/name changes so kiosks refresh in real time.
     touchConfig("brand-updated");
-    saveSettings();
+    await saveSettings();
   }
 
-  saveData();
+  return saveData();
 }
 
 function superAdminSummary() {
@@ -4192,7 +4268,14 @@ function handleSuperAdminTemplate(req, res, parts, body) {
   return json(res, 405, { error: "Unsupported template operation." });
 }
 
-function handleSuperAdminCollection(req, res, collection, itemId, body) {
+// Async so POST/PUT/PATCH/DELETE below can await the actual persist before
+// telling the admin it worked - see saveSuperAdminCollection() and the
+// comment on persistSnapshotWithRetry() for why this matters: a save used to
+// report success to the admin regardless of whether it actually reached
+// RDS, so a transient failure could silently revert an edit (like a kiosk's
+// assigned services) the next time the backend process restarted, with
+// nothing in the meantime showing anything was ever wrong.
+async function handleSuperAdminCollection(req, res, collection, itemId, body) {
   const config = superAdminCollectionConfig(collection);
 
   if (!config) {
@@ -4220,9 +4303,14 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
     if (items.some((item) => String(item[config.key]).toUpperCase() === id.toUpperCase())) {
       return json(res, 409, { error: "Record already exists." });
     }
+    const previousItems = items.slice();
     items.push(record);
     config.set(items);
-    saveSuperAdminCollection(collection);
+    const saveResult = await saveSuperAdminCollection(collection);
+    if (!saveResult?.ok) {
+      config.set(previousItems);
+      return json(res, 502, { error: "Could not save the new record. Please try again." });
+    }
     return json(res, 201, { record, [collection]: config.get() });
   }
 
@@ -4232,9 +4320,14 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
     const record = config.normalize({ ...items[index], ...(body[collection.slice(0, -1)] || body), [config.key]: items[index][config.key] }, items[index]);
     const validationError = validateSuperAdminRecord(collection, record, items[index]);
     if (validationError) return json(res, 400, { error: validationError });
+    const previousItems = items.slice();
     items[index] = record;
     config.set(items);
-    saveSuperAdminCollection(collection);
+    const saveResult = await saveSuperAdminCollection(collection);
+    if (!saveResult?.ok) {
+      config.set(previousItems);
+      return json(res, 502, { error: "Could not save the update. Please try again." });
+    }
     return json(res, 200, { record, [collection]: config.get() });
   }
 
@@ -4258,12 +4351,21 @@ function handleSuperAdminCollection(req, res, collection, itemId, body) {
         return json(res, 409, { error: "Move this admin's projects and kiosks to another admin before deleting." });
       }
     }
+    const previousItems = items.slice();
+    const previousPricingEntry = db.pricing[itemId];
     const [deleted] = items.splice(index, 1);
     config.set(items);
     if (collection === "services") {
       delete db.pricing[itemId];
     }
-    saveSuperAdminCollection(collection);
+    const saveResult = await saveSuperAdminCollection(collection);
+    if (!saveResult?.ok) {
+      config.set(previousItems);
+      if (collection === "services" && previousPricingEntry !== undefined) {
+        db.pricing[itemId] = previousPricingEntry;
+      }
+      return json(res, 502, { error: "Could not save the deletion. Please try again." });
+    }
     return json(res, 200, { deleted, [collection]: config.get() });
   }
 
@@ -4789,7 +4891,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 404, { error: "Idle video not found" });
     }
 
-    return binary(res, 200, fs.readFileSync(filePath), videoContentType(filename), { cacheControl: IMMUTABLE_UPLOAD_CACHE_CONTROL });
+    return sendFileWithRangeSupport(req, res, filePath, videoContentType(filename), { cacheControl: IMMUTABLE_UPLOAD_CACHE_CONTROL });
   }
 
   if (req.method === "POST" && (url.pathname === "/api/admin/idle-image" || url.pathname === "/api/super-admin/idle-image")) {
@@ -5698,6 +5800,19 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
 // duplicate here) — clients just re-fetch through the existing authenticated
 // REST endpoints they already use, so this is purely a "check now" signal.
 const wss = new WebSocketServer({ server, path: "/ws" });
+// ws re-emits the underlying http `server`'s own 'error' event onto `wss`
+// (e.g. the EADDRINUSE thrown at startup.listen() below, see server.on("error", ...)
+// there). An 'error' event with no listener on the target EventEmitter throws
+// synchronously in Node - and that throw happens INSIDE wss's own internal
+// listener for the server's 'error' event, meaning it interrupts that
+// listener-invocation loop before server's own "error" listener (registered
+// later, in startServer()) ever gets a turn. Without this listener here, that
+// throw was the actual thing landing in the generic uncaughtException net at
+// the top of this file - "process kept alive" while never having bound to
+// the port. This listener is a no-op beyond preventing that: the real
+// listen-failure handling and process.exit(1) both stay in
+// server.on("error", ...) inside startServer().
+wss.on("error", () => {});
 const wsClients = new Set();
 let broadcastDataChangedTimer = null;
 
@@ -5822,6 +5937,24 @@ async function startServer() {
 
   checkStaleJobs();
   setInterval(checkStaleJobs, 30000); // Stale jobs move on a much slower timescale than kiosk heartbeats
+
+  // A failure to bind the port (EADDRINUSE from a stray/leftover process still
+  // holding it, EACCES, ...) is a listen-time 'error' event on the server
+  // itself, not a request-handling bug - the generic uncaughtException net
+  // above is the wrong place for it to land. Without this listener, Node has
+  // no listener for that 'error' event and throws it as an uncaught
+  // exception instead, which the net above then only logs and swallows -
+  // leaving the process reported "online" by PM2 while never actually
+  // listening on the port, so every request silently fails forever until
+  // someone notices and restarts it by hand. Exiting here instead lets PM2's
+  // own restart/alerting actually see the failure.
+  server.on("error", (error) => {
+    console.error(`Backend failed to start: ${error.message}`);
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${PORT} is already in use - find and stop whatever else is bound to it, then restart this service.`);
+    }
+    process.exit(1);
+  });
 
   server.listen(PORT, HOST || undefined, () => {
     const hostLabel = HOST || "localhost";

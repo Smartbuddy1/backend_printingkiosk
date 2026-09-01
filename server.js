@@ -3025,7 +3025,7 @@ function mobileUploadFullLogoDataUri() {
   return cachedMobileUploadFullLogoDataUri;
 }
 
-function renderMobileUploadShell({ title, eyebrow, heading, description, content, script = "" }) {
+function renderMobileUploadShell({ title, eyebrow, heading, description, content, footer = "", script = "" }) {
   const logoUrl = mobileUploadLogoDataUri();
   const brandLogoUrl = mobileUploadFullLogoDataUri() || logoUrl;
   return `
@@ -3044,6 +3044,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           body{min-height:100vh;margin:0;background:radial-gradient(circle at 8% 4%,rgba(23,105,245,.17),transparent 30%),radial-gradient(circle at 95% 90%,rgba(21,166,105,.11),transparent 32%),linear-gradient(160deg,#f8fbff 0%,#eef4ff 100%);color:var(--ink);font-family:"Segoe UI",Inter,Arial,sans-serif;}
           body:before{background:linear-gradient(90deg,var(--blue),#20a7f7,var(--green));content:"";height:5px;left:0;position:fixed;right:0;top:0;z-index:2;}
           .page{align-items:center;display:flex;justify-content:center;min-height:100vh;padding:max(28px,env(safe-area-inset-top)) 18px max(28px,env(safe-area-inset-bottom));}
+          .page.has-action-bar{padding-bottom:calc(140px + env(safe-area-inset-bottom));}
           .shell{max-width:480px;width:100%;}
           .brand{align-items:center;background:#fff;border-radius:18px;box-shadow:0 10px 26px rgba(31,74,140,.14);display:flex;justify-content:center;margin:0 auto 18px;padding:14px 20px;}
           .brand img{display:block;height:auto;width:200px;}
@@ -3083,7 +3084,8 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           .submit{background:linear-gradient(135deg,var(--blue),var(--blue-dark));border:0;border-radius:14px;box-shadow:0 13px 26px rgba(23,105,245,.22);color:#fff;font:inherit;font-size:16px;font-weight:800;min-height:54px;padding:0 20px;transition:opacity .18s,transform .18s;width:100%;}
           .submit:not(:disabled):active{transform:translateY(1px);}
           .submit:disabled{box-shadow:none;cursor:not-allowed;opacity:.45;}
-          .submit-bar{background:linear-gradient(180deg,rgba(255,255,255,0),#fff 22%);bottom:0;display:grid;gap:9px;padding-bottom:2px;padding-top:14px;position:sticky;z-index:3;}
+          .action-bar{background:#fff;border-radius:0 0 24px 24px;bottom:0;box-shadow:0 -12px 24px rgba(31,74,140,.12);box-sizing:border-box;display:grid;gap:9px;left:50%;margin:0 auto;max-width:480px;padding:14px 26px calc(14px + env(safe-area-inset-bottom));position:fixed;transform:translateX(-50%);width:calc(100% - 36px);z-index:4;}
+          .action-bar[hidden]{display:none;}
           .progress{display:grid;gap:7px;margin-top:-2px;}
           .progress[hidden]{display:none;}
           .progress-track{background:#e3ebf7;border-radius:999px;height:8px;overflow:hidden;position:relative;}
@@ -3109,11 +3111,11 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
           .scan-hint{color:#fff;font-size:13px;font-weight:650;margin:16px 0 0;text-align:center;}
           .scan-hint.error{color:#ffb4ae;}
           .scan-cancel{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);border-radius:12px;color:#fff;font:inherit;font-size:14px;font-weight:700;margin-top:18px;min-height:46px;padding:0 22px;}
-          @media(max-width:380px){.page{padding-left:12px;padding-right:12px}.card-head{padding:24px 19px 20px}.card-body{padding:20px 19px 23px}.brand img{width:170px}.step{display:grid;justify-items:center}.upload-zone{min-height:175px}}
+          @media(max-width:380px){.page{padding-left:12px;padding-right:12px}.card-head{padding:24px 19px 20px}.card-body{padding:20px 19px 23px}.brand img{width:170px}.step{display:grid;justify-items:center}.upload-zone{min-height:175px}.action-bar{padding-left:19px;padding-right:19px;width:calc(100% - 24px)}}
         </style>
       </head>
       <body>
-        <main class="page">
+        <main class="page${footer ? " has-action-bar" : ""}">
           <div class="shell">
             <a class="brand" href="#" aria-label="Print Kiosk"><img src="${brandLogoUrl}" alt="Aarya Innovtech Pvt. Ltd." /></a>
             <section class="card">
@@ -3127,6 +3129,7 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
             <p class="footer">Your documents are used only for this print session. Complete payment and printing on the kiosk screen.</p>
           </div>
         </main>
+        ${footer ? `<div class="action-bar" id="action-bar">${footer}</div>` : ""}
         ${script ? `<script>${script}</script>` : ""}
       </body>
     </html>
@@ -3377,7 +3380,7 @@ function renderMobileUploadPage(session) {
         selection.hidden = true;
         zone.classList.remove('selected');
         submitButton.disabled = true;
-        submitButton.textContent = 'Send to Print Kiosk';
+        submitButton.textContent = 'Send';
         list.replaceChildren();
         hideProgress();
       }
@@ -3474,13 +3477,13 @@ function renderMobileUploadPage(session) {
             isStaged = true;
             setProgressDone('Uploaded ✓ Ready to send');
             submitButton.disabled = false;
-            submitButton.textContent = 'Send to Print Kiosk';
+            submitButton.textContent = 'Send';
           } else {
             isStaged = false;
             hideProgress();
             showError(data.error || 'Upload failed. Please try again.');
             submitButton.disabled = true;
-            submitButton.textContent = 'Send to Print Kiosk';
+            submitButton.textContent = 'Send';
           }
         };
         xhr.onerror = function () {
@@ -3489,7 +3492,7 @@ function renderMobileUploadPage(session) {
           hideProgress();
           showError('Network error. Check your connection and try again.');
           submitButton.disabled = true;
-          submitButton.textContent = 'Send to Print Kiosk';
+          submitButton.textContent = 'Send';
         };
 
         xhr.send(fd);
@@ -3526,17 +3529,23 @@ function renderMobileUploadPage(session) {
         }
         if (!files.length) { resetFiles(); return; }
 
-        submitButton.disabled = true;
-        showError('Checking document…');
+        // Upload starts immediately instead of waiting on the PDF page-count
+        // check below - on a bigger file (4-5MB+) that check can take a
+        // couple of seconds on its own, and serializing it in front of the
+        // network transfer just adds dead time. The server independently
+        // re-checks page count when the upload lands (see
+        // validateUploadedFiles's estimatePdfPageCount backstop), so running
+        // both at once is still safe - this only makes the client-side
+        // check faster to surface, not load-bearing for correctness.
+        selectedFiles = files;
+        finalizeSelection(files);
 
         checkPdfPageLimits(files).then(function (pageError) {
-          if (pageError) {
-            rejectPick(pageError);
-            return;
-          }
-          showError('');
-          selectedFiles = files;
-          finalizeSelection(files);
+          if (!pageError || selectedFiles !== files) return;
+          if (stageXhr) { stageXhr.abort(); stageXhr = null; }
+          isStaged = false;
+          hideProgress();
+          rejectPick(pageError);
         });
       }
 
@@ -3556,6 +3565,13 @@ function renderMobileUploadPage(session) {
 
       /* ── sent view ───────────────────────────── */
       function showSentView(fileCount) {
+        // The action bar lives outside card-body now (so it can stay fixed
+        // in place instead of sliding with the growing file list) - it no
+        // longer disappears for free when card-body's content is swapped
+        // out below, so hide it explicitly once the job is sent.
+        var actionBar = document.getElementById('action-bar');
+        if (actionBar) actionBar.hidden = true;
+
         // Swap header
         cardHead.innerHTML =
           '<span class="eyebrow">Upload complete</span>' +
@@ -3610,7 +3626,7 @@ function renderMobileUploadPage(session) {
          from beginStaging(), so this just hands them to the kiosk. ─── */
       function resetSubmitState() {
         submitButton.disabled = !isStaged;
-        submitButton.textContent = 'Send to Print Kiosk';
+        submitButton.textContent = 'Send';
       }
 
       form.addEventListener('submit', function (e) {
@@ -3673,14 +3689,14 @@ function renderMobileUploadPage(session) {
           <ul class="file-list" id="file-list"></ul>
         </div>
         <p class="privacy">Files are securely linked to this kiosk session and are not shown to other users.</p>
-        <div class="submit-bar">
-          <button class="submit" id="submit-button" type="submit" disabled>Send to Print Kiosk</button>
-          <div class="progress" id="progress" hidden>
-            <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
-            <div class="progress-label" id="progress-label">Uploading… 0%</div>
-          </div>
-        </div>
       </form>
+    `,
+    footer: `
+      <button class="submit" id="submit-button" type="submit" form="upload-form" disabled>Send</button>
+      <div class="progress" id="progress" hidden>
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-label" id="progress-label">Uploading… 0%</div>
+      </div>
     `,
     script
   });
@@ -5226,7 +5242,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   // Phone -> server transfer only. Runs the instant a file passes the
   // client-side checks (see the mobile-upload page script) so the bytes are
   // already sitting on the server, staged against this token, well before
-  // the visitor taps "Send to Print Kiosk". Nothing here is visible to the
+  // the visitor taps "Send". Nothing here is visible to the
   // kiosk yet - the kiosk only ever polls session.status, and this route
   // never sets it past "staged".
   if (req.method === "POST" && url.pathname.startsWith("/mobile-upload/") && url.pathname.endsWith("/stage")) {
@@ -5257,7 +5273,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   // Server -> kiosk handoff. This is what the kiosk's poller actually reacts
   // to (status flips to "uploaded" here, never in /stage above). When the
   // files were already staged, this call carries no file bytes - it just
-  // promotes them, so tapping "Send to Print Kiosk" is near-instant instead
+  // promotes them, so tapping "Send" is near-instant instead
   // of re-uploading everything. A direct multipart POST straight to this
   // route (no prior /stage call) is still honored for backward compatibility.
   if (req.method === "POST" && url.pathname.startsWith("/mobile-upload/") && url.pathname.endsWith("/upload")) {

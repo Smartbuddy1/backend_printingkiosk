@@ -3286,7 +3286,6 @@ function renderMobileUploadPage(session) {
       var supported = /\\.(pdf|jpe?g|png)$/i;
       var MAX_FILE_SIZE_BYTES = ${MAX_UPLOAD_FILE_SIZE_BYTES};
 
-      var form         = document.getElementById('upload-form');
       var input        = document.getElementById('documents');
       var zone         = document.getElementById('upload-zone');
       var selection    = document.getElementById('selection');
@@ -3629,9 +3628,14 @@ function renderMobileUploadPage(session) {
         submitButton.textContent = 'Send';
       }
 
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-
+      // A plain button + click handler, not type=submit - #upload-form still
+      // has the required file <input> in it, whose .value we deliberately
+      // keep reset to '' after every pick (see the change handler) so the
+      // same file can be re-picked later. A real form submit would trigger
+      // the browser's native "select a file" validation against that
+      // always-empty input before this code ever ran, blocking Send even
+      // with files already staged.
+      submitButton.addEventListener('click', function () {
         var files = selectedFiles;
         if (!files.length) { showError('Please choose at least one file.'); return; }
         if (!isStaged) { showError('Please wait for the upload to finish.'); return; }
@@ -3692,7 +3696,7 @@ function renderMobileUploadPage(session) {
       </form>
     `,
     footer: `
-      <button class="submit" id="submit-button" type="submit" form="upload-form" disabled>Send</button>
+      <button class="submit" id="submit-button" type="button" disabled>Send</button>
       <div class="progress" id="progress" hidden>
         <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
         <div class="progress-label" id="progress-label">Uploading… 0%</div>

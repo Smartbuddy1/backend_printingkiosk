@@ -7,5 +7,6 @@ npm-debug.log*
 # current state. Not needed in version control.
 data.json
 admin-sessions.json
+mobile-upload-sessions.json
 backend.log
 uploads/

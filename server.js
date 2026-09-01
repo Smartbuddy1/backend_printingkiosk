@@ -37,6 +37,8 @@ const SETTINGS_PATH = process.env.SETTINGS_PATH ? path.resolve(process.env.SETTI
 const DATA_PATH = process.env.DATA_PATH ? path.resolve(process.env.DATA_PATH) : path.join(__dirname, "data.json");
 const ADMIN_SESSIONS_PATH = process.env.ADMIN_SESSIONS_PATH ? path.resolve(process.env.ADMIN_SESSIONS_PATH) : path.join(__dirname, "admin-sessions.json");
 const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const MOBILE_UPLOAD_SESSIONS_PATH = process.env.MOBILE_UPLOAD_SESSIONS_PATH ? path.resolve(process.env.MOBILE_UPLOAD_SESSIONS_PATH) : path.join(__dirname, "mobile-upload-sessions.json");
+const MOBILE_UPLOAD_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 const FRONTEND_DIR = path.join(__dirname, "../frontend");
 const FRONTEND_ASSET_DIR = path.join(FRONTEND_DIR, "assets");
 const UPLOADS_DIR = path.join(__dirname, "uploads");
@@ -63,6 +65,7 @@ const KIOSK_UPDATE_STATUSES = new Set([
 const mobileUploadSessions = new Map();
 const adminSessions = new Map();
 loadAdminSessions();
+loadMobileUploadSessions();
 const processedRazorpayWebhookEvents = new Set();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const LOCAL_ONLY_ADMIN_EMAIL = "admin@gmail.com";
@@ -2046,6 +2049,72 @@ setInterval(() => {
   if (changed || adminSessions.size) saveAdminSessions();
 }, 5 * 60 * 1000);
 
+// mobileUploadSessions is persisted the same way as adminSessions above, and
+// for the same reason: a plain in-memory Map is wiped on every backend
+// restart (crash, redeploy, EC2 reboot), so a QR code that had been sitting
+// on the kiosk screen unscanned - completely untouched, nobody's fault -
+// would suddenly 404 as "expired" the moment someone finally scanned it.
+// Only the lightweight pre-upload fields are persisted (token/url/qrSvg/
+// timestamps) - never stagedFiles/files, which hold raw file bytes and would
+// be far too large and churn-heavy to write to disk on every stage/upload
+// call. A restart mid-upload still loses any staged-but-not-yet-sent files,
+// but the QR itself stays valid instead of dead-ending, and status/file
+// fields are always reset to a fresh "waiting" state on load below.
+function loadMobileUploadSessions() {
+  try {
+    if (!fs.existsSync(MOBILE_UPLOAD_SESSIONS_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(MOBILE_UPLOAD_SESSIONS_PATH, "utf8"));
+    const now = Date.now();
+    Object.entries(raw || {}).forEach(([token, session]) => {
+      if (session && Number(session.expiresAt) > now) {
+        mobileUploadSessions.set(token, {
+          ...session,
+          status: "waiting",
+          file: null,
+          files: [],
+          stagedFiles: []
+        });
+      }
+    });
+  } catch (error) {
+    console.error(`Could not load mobile upload sessions: ${error.message}`);
+  }
+}
+
+function saveMobileUploadSessions() {
+  try {
+    const lightweight = {};
+    for (const [token, session] of mobileUploadSessions) {
+      lightweight[token] = {
+        token: session.token,
+        publicBaseUrl: session.publicBaseUrl,
+        uploadUrl: session.uploadUrl,
+        qrSvg: session.qrSvg,
+        createdAt: session.createdAt,
+        expiresAt: session.expiresAt
+      };
+    }
+    writeJsonAtomic(MOBILE_UPLOAD_SESSIONS_PATH, lightweight);
+  } catch (error) {
+    console.error(`Could not save mobile upload sessions: ${error.message}`);
+  }
+}
+
+// Same periodic sweep pattern as adminSessions above, just on its own timer
+// since it prunes on a much shorter TTL (2h vs 8h) that matches how quickly
+// kiosks churn through QR sessions.
+setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+  for (const [token, session] of mobileUploadSessions) {
+    if (session.expiresAt < now) {
+      mobileUploadSessions.delete(token);
+      changed = true;
+    }
+  }
+  if (changed) saveMobileUploadSessions();
+}, 5 * 60 * 1000);
+
 function requireAdminSession(req, res, role) {
   const session = readAdminSession(req);
 
@@ -2798,10 +2867,12 @@ async function createMobileUploadSession(req) {
     file: null,
     files: [],
     stagedFiles: [],
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    expiresAt: Date.now() + MOBILE_UPLOAD_SESSION_TTL_MS
   };
 
   mobileUploadSessions.set(token, session);
+  saveMobileUploadSessions();
   return session;
 }
 
@@ -3136,15 +3207,20 @@ function renderMobileUploadShell({ title, eyebrow, heading, description, content
   `;
 }
 
+// Defines window.setupScanAgain rather than auto-running immediately, so
+// pages that insert the "Scan New QR Code" button into the DOM later (via
+// JS, after page load - see showSentView()) can call it once the button
+// actually exists, not just at initial script-parse time.
 function scanAgainScript() {
   return `
-    (function () {
+    function setupScanAgain() {
       var btn      = document.getElementById('scan-again-btn');
       var overlay  = document.getElementById('scan-overlay');
       var video    = document.getElementById('scan-video');
       var hint     = document.getElementById('scan-hint');
       var cancel   = document.getElementById('scan-cancel');
-      if (!btn) return;
+      if (!btn || btn.dataset.scanAgainReady) return;
+      btn.dataset.scanAgainReady = '1';
 
       var stream = null;
       var detector = null;
@@ -3220,7 +3296,7 @@ function scanAgainScript() {
 
       if (cancel) cancel.addEventListener('click', stopScan);
       window.addEventListener('pagehide', stopScan);
-    })();
+    }
   `;
 }
 
@@ -3236,17 +3312,15 @@ function renderMobileStatusPage({ title, heading, description, note, warning = f
         <h2>${warning ? "Scan again" : "You are all set"}</h2>
         <p>${escapeHtml(note)}</p>
         <div class="status-note">${warning ? "Return to the Print Kiosk and generate a new QR code." : "Return to the kiosk to preview your documents and continue to payment."}</div>
-        ${warning ? `<button type="button" id="scan-again-btn" class="camera-button"><span class="camera-icon" aria-hidden="true">&#128247;</span> Scan New QR Code</button>` : ""}
+        <button type="button" id="scan-again-btn" class="camera-button"><span class="camera-icon" aria-hidden="true">&#128247;</span> Scan New QR Code</button>
       </div>
-      ${warning ? `
-        <div class="scan-overlay" id="scan-overlay">
-          <div class="scan-frame"><video id="scan-video" muted playsinline autoplay></video></div>
-          <p class="scan-hint" id="scan-hint"></p>
-          <button type="button" class="scan-cancel" id="scan-cancel">Cancel</button>
-        </div>
-      ` : ""}
+      <div class="scan-overlay" id="scan-overlay">
+        <div class="scan-frame"><video id="scan-video" muted playsinline autoplay></video></div>
+        <p class="scan-hint" id="scan-hint"></p>
+        <button type="button" class="scan-cancel" id="scan-cancel">Cancel</button>
+      </div>
     `,
-    script: warning ? scanAgainScript() : ""
+    script: `${scanAgainScript()}\nsetupScanAgain();`
   });
 }
 
@@ -3585,9 +3659,16 @@ function renderMobileUploadPage(session) {
             '<h2 id="sent-title">You are all set</h2>' +
             '<p id="sent-msg">Continue on the kiosk to review and pay.</p>' +
             '<div class="status-note" id="sent-note">' +
-              'This QR session is now closed. To upload more files, go back to the kiosk and tap <strong>Back</strong> to get a new QR code.' +
+              'This QR session is now closed. To send more documents, tap Scan New QR Code below and point your camera at the kiosk\\'s QR code - no need to reload this page.' +
             '</div>' +
+            '<button type="button" id="scan-again-btn" class="camera-button"><span class="camera-icon" aria-hidden="true">&#128247;</span> Scan New QR Code</button>' +
+          '</div>' +
+          '<div class="scan-overlay" id="scan-overlay">' +
+            '<div class="scan-frame"><video id="scan-video" muted playsinline autoplay></video></div>' +
+            '<p class="scan-hint" id="scan-hint"></p>' +
+            '<button type="button" class="scan-cancel" id="scan-cancel">Cancel</button>' +
           '</div>';
+        setupScanAgain();
 
         startPolling();
       }
@@ -3667,7 +3748,7 @@ function renderMobileUploadPage(session) {
         xhr.send();
       });
     })();
-  `;
+  ` + scanAgainScript();
 
   return renderMobileUploadShell({
     title: "Upload documents",

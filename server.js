@@ -3935,19 +3935,6 @@ function setJobPrintStatus(job, printStatus, extra = {}) {
     job.failureReason = extra.failureReason || job.failureReason || "Print failed";
   }
 
-  // Clear any "stuck in queue" alert (see checkStaleJobs()) the moment the
-  // job actually reaches a terminal state, even if that happened after the
-  // sweep already flagged it as stale - otherwise the alert would stay
-  // "active" forever once it's no longer true.
-  if (/completed|failed/i.test(job.printStatus)) {
-    const staleAlertTitle = `${job.kioskId || "Kiosk"} - Print Job Stuck (${job.jobId})`;
-    const staleAlert = db.alertLogs.find((a) => a.title === staleAlertTitle && a.status === "active");
-    if (staleAlert) {
-      staleAlert.status = "resolved";
-      staleAlert.resolvedAt = new Date().toISOString();
-    }
-  }
-
   saveData();
   return job;
 }
@@ -6211,54 +6198,6 @@ async function startServer() {
 
   checkKioskTimeouts();
   setInterval(checkKioskTimeouts, 2000); // Check every 2s so the 5s heartbeat timeout above is caught promptly
-
-  // A paid job normally clears "In Queue"/"Printing" within seconds to a
-  // couple minutes. If the local print agent crashes, the kiosk loses
-  // power mid-print, or it just never picks the job up, nothing previously
-  // detected that - the job sat there forever with no alert and no way for
-  // staff to notice short of a customer complaint. Mirrors the kiosk
-  // offline sweep above: same alertLogs table, same dedup-by-title pattern,
-  // resolved automatically in setJobPrintStatus() once the job actually
-  // finishes (even late).
-  const STALE_JOB_TIMEOUT_MS = 10 * 60 * 1000;
-
-  const checkStaleJobs = () => {
-    let changed = false;
-    const now = Date.now();
-    const iso = new Date(now).toISOString();
-
-    db.jobs.forEach(job => {
-      if (job.printStatus !== "In Queue" && job.printStatus !== "Printing") return;
-
-      const successfulPayment = db.payments.find(p => p.jobId === job.jobId && p.status === "Success");
-      const referenceTime = successfulPayment?.paidAt || job.createdAt;
-      if (!referenceTime) return;
-
-      const elapsedMs = now - new Date(referenceTime).getTime();
-      if (elapsedMs < STALE_JOB_TIMEOUT_MS) return;
-
-      const alertTitle = `${job.kioskId || "Kiosk"} - Print Job Stuck (${job.jobId})`;
-      const existingActive = db.alertLogs.find(a => a.title === alertTitle && a.status === 'active');
-      if (!existingActive) {
-        db.alertLogs.push({
-          id: "ALT-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
-          kioskId: job.kioskId || "Unknown",
-          category: "queue",
-          title: alertTitle,
-          detail: `This job has been "${job.printStatus}" for over ${Math.round(elapsedMs / 60000)} minute(s) without completing. Check the local print agent and printer connection at this kiosk.`,
-          tone: "bad",
-          status: 'active',
-          createdAt: iso,
-          resolvedAt: null
-        });
-        changed = true;
-      }
-    });
-    if (changed) saveData();
-  };
-
-  checkStaleJobs();
-  setInterval(checkStaleJobs, 30000); // Stale jobs move on a much slower timescale than kiosk heartbeats
 
   // A failure to bind the port (EADDRINUSE from a stray/leftover process still
   // holding it, EACCES, ...) is a listen-time 'error' event on the server

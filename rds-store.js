@@ -184,6 +184,33 @@ async function saveSnapshot(snapshot) {
   }
 }
 
+// A lightweight save for the kiosk heartbeat path (POST /api/kiosk/health,
+// hit every 2s per online kiosk - see electron/printerHealthMonitor.js).
+// That handler only ever touches the kiosk's own row and alert rows, so
+// running it through the full saveSnapshot() above was rewriting the entire
+// jobs/payments/services tables (delete-then-reinsert every row) on every
+// single heartbeat, for no reason - with jobs/payments growing into the
+// hundreds, that meant hundreds of unnecessary queries every 2 seconds,
+// competing with everything else for a database connection and starving
+// real request handling. Upsert-only, mirroring alertLogs above - a
+// heartbeat only ever updates an existing kiosk row, never removes one, so
+// there's nothing here that needs the destructive replace.
+async function saveKioskHeartbeat(kiosks, alertLogs) {
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN");
+    await upsertCollection(client, "kiosks", kiosks);
+    await upsertCollection(client, "alertLogs", alertLogs);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function close() {
   if (pool) {
     await pool.end();
@@ -196,5 +223,6 @@ module.exports = {
   initDatabase,
   loadSnapshot,
   saveSnapshot,
+  saveKioskHeartbeat,
   close
 };

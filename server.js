@@ -780,10 +780,10 @@ function clonedDataSnapshot() {
 // either. Callers that care whether THIS specific save landed (see
 // saveSuperAdminCollection() below) can await the returned promise and check
 // .ok; callers that don't await it keep working exactly as before.
-async function persistSnapshotWithRetry(snapshot, maxAttempts = 3) {
+async function persistWithRetry(saveFn, label, maxAttempts = 3) {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      await rdsStore.saveSnapshot(snapshot);
+      await saveFn();
       return { ok: true };
     } catch (error) {
       if (attempt === maxAttempts) {
@@ -791,10 +791,10 @@ async function persistSnapshotWithRetry(snapshot, maxAttempts = 3) {
         // will be included in the next successful save, so a transient failure
         // here isn't permanent data loss on its own - but log loudly since a
         // save that never recovers before a server restart would lose it.
-        console.error(`RDS save failed after ${maxAttempts} attempts: ${error.message}`);
+        console.error(`RDS ${label} save failed after ${maxAttempts} attempts: ${error.message}`);
         return { ok: false, error };
       }
-      console.warn(`RDS save attempt ${attempt} failed, retrying: ${error.message}`);
+      console.warn(`RDS ${label} save attempt ${attempt} failed, retrying: ${error.message}`);
       await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
     }
   }
@@ -804,7 +804,23 @@ function persistDatabaseSnapshot() {
   if (!rdsStore.enabled()) return Promise.resolve({ ok: true });
 
   const snapshot = clonedDataSnapshot();
-  const attempt = databaseSaveQueue.then(() => persistSnapshotWithRetry(snapshot));
+  const attempt = databaseSaveQueue.then(() => persistWithRetry(() => rdsStore.saveSnapshot(snapshot), "snapshot"));
+  databaseSaveQueue = attempt;
+  return attempt;
+}
+
+// Lightweight sibling of persistDatabaseSnapshot() for the kiosk heartbeat
+// and offline-timeout-sweep paths (see saveKioskHeartbeatData() below for
+// why) - persists only the kiosk row(s) that actually changed plus
+// alertLogs, instead of the entire jobs/payments/services/kiosks snapshot.
+// Shares databaseSaveQueue with the full snapshot save so the two can never
+// race each other against the same tables.
+function persistKioskHeartbeat(kiosks) {
+  if (!rdsStore.enabled()) return Promise.resolve({ ok: true });
+
+  const kiosksSnapshot = JSON.parse(JSON.stringify(kiosks));
+  const alertLogsSnapshot = JSON.parse(JSON.stringify(db.alertLogs));
+  const attempt = databaseSaveQueue.then(() => persistWithRetry(() => rdsStore.saveKioskHeartbeat(kiosksSnapshot, alertLogsSnapshot), "kiosk heartbeat"));
   databaseSaveQueue = attempt;
   return attempt;
 }
@@ -826,6 +842,29 @@ function saveSettings() {
 function saveData() {
   const result = rdsStore.enabled()
     ? persistDatabaseSnapshot()
+    : (writeJsonAtomic(DATA_PATH, dataSnapshot()), Promise.resolve({ ok: true }));
+
+  broadcastDataChanged();
+  return result;
+}
+
+// POST /api/kiosk/health hits this every 2s per online kiosk (see
+// electron/printerHealthMonitor.js), and checkKioskTimeouts()'s offline sweep
+// runs on the same 2s cadence - both only ever change kiosk row(s) plus
+// alertLogs. Going through saveData()'s full snapshot save meant rewriting
+// the entire jobs/payments/services tables (delete-then-reinsert every row)
+// on every single heartbeat. With jobs/payments in the hundreds and growing,
+// that's hundreds of unnecessary queries every 2 seconds, competing for the
+// database connection and starving real request handling - this was
+// intermittently taking the whole backend down. The local JSON-file path
+// (non-RDS/dev) is untouched: writing the whole file there is cheap
+// regardless, so there's nothing worth optimizing. Accepts either one kiosk
+// or the full kiosks array (checkKioskTimeouts can change more than one per
+// sweep).
+function saveKioskHeartbeatData(kioskOrKiosks) {
+  const kiosks = Array.isArray(kioskOrKiosks) ? kioskOrKiosks : [kioskOrKiosks];
+  const result = rdsStore.enabled()
+    ? persistKioskHeartbeat(kiosks)
     : (writeJsonAtomic(DATA_PATH, dataSnapshot()), Promise.resolve({ ok: true }));
 
   broadcastDataChanged();
@@ -5030,7 +5069,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
        }
     });
 
-    saveData();
+    saveKioskHeartbeatData(kiosk);
 
     return json(res, 200, { ok: true, kiosk });
   }
@@ -6227,7 +6266,7 @@ async function startServer() {
         }
       }
     });
-    if (changed) saveData();
+    if (changed) saveKioskHeartbeatData(db.kiosks);
   };
 
   checkKioskTimeouts();

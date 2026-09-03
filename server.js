@@ -5644,6 +5644,40 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     return json(res, 200, { payment, job });
   }
 
+  // Reports a payment attempt that failed *on the customer's phone* (Razorpay's
+  // own payment.failed event - card declined, insufficient funds, etc). Without
+  // this, job.paymentStatus only ever reaches "Payment Failed" via a Razorpay
+  // webhook, which most self-hosted kiosks never configure - so a failed
+  // attempt left the job silently "Payment Pending" forever and the kiosk's
+  // poll (checkKioskPaymentStatus) had nothing to react to, leaving the same
+  // already-spent QR on screen with no way to get a fresh one.
+  if (req.method === "POST" && url.pathname === "/api/payment/failed") {
+    const job = findJob(body.jobId);
+    if (!job) return json(res, 404, { error: "Payment job was not found." });
+
+    const payment = body.razorpay_order_id
+      ? db.payments.find((item) => item.razorpayOrderId === body.razorpay_order_id)
+      : db.payments.find((item) => item.jobId === job.jobId && item.status === "Pending");
+
+    // A success can race a failure report (e.g. the customer retried and paid
+    // on a second attempt right before this request landed) - never downgrade
+    // a job/payment that's already succeeded.
+    if (job.paymentStatus === "Payment Success") {
+      return json(res, 200, { payment: payment || null, job });
+    }
+
+    if (payment && payment.status !== "Success") {
+      payment.status = "Failed";
+      payment.failedAt = payment.failedAt || new Date().toISOString();
+      payment.failureReason = String(body.reason || "").slice(0, 300) || "Razorpay payment failed.";
+    }
+
+    job.paymentStatus = "Payment Failed";
+    saveData();
+
+    return json(res, 200, { payment: payment || null, job });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/print/start") {
     const job = findJob(body.jobId);
     if (!job) return json(res, 404, { error: "Job not found" });

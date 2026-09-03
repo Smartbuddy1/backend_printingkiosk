@@ -52,6 +52,12 @@ const MAX_UPLOAD_PAGES_PER_DOCUMENT = 10;
 const MAX_UPLOAD_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const CUSTOMER_UPLOAD_EXTENSIONS = new Set(["PDF", "JPG", "JPEG", "PNG"]);
 const KIOSK_PRINTER_STALE_MS = 10 * 60 * 1000;
+// How long after being marked "resolved" a printer health alert can be
+// reopened in place instead of logging a brand new row - absorbs a flapping
+// sensor (paper level bouncing around the "low" threshold, say) without
+// spamming Alert History with dozens of near-duplicate entries for the same
+// kiosk+issue.
+const ALERT_REOPEN_WINDOW_MS = 15 * 60 * 1000;
 const KIOSK_UPDATE_STATUSES = new Set([
   "current",
   "available",
@@ -4215,6 +4221,23 @@ function normalizeSuperAdminPayment(record = {}, existing = {}) {
   };
 }
 
+function normalizeSuperAdminAlert(record = {}, existing = {}) {
+  const next = { ...existing, ...record };
+
+  return {
+    ...next,
+    id: String(existing.id || next.id || `ALT-${Date.now()}-${Math.floor(Math.random() * 1000)}`).trim(),
+    kioskId: normalizeKioskCode(next.kioskId || "") || "",
+    category: String(next.category || "general").trim(),
+    title: String(next.title || "Alert").trim(),
+    detail: String(next.detail || "").trim(),
+    tone: String(next.tone || "info").trim(),
+    status: ["active", "resolved"].includes(String(next.status || "").toLowerCase()) ? String(next.status).toLowerCase() : "active",
+    createdAt: next.createdAt || existing.createdAt || isoNow(),
+    resolvedAt: next.resolvedAt || null
+  };
+}
+
 function normalizeSuperAdminKiosk(record = {}, existing = {}) {
   const next = { ...existing, ...record };
   const kioskId = normalizeKioskCode(existing.kioskId || next.kioskId) || nextUniqueKioskId();
@@ -4349,6 +4372,14 @@ function superAdminCollectionConfig(collection) {
         db.kiosks = items;
       },
       normalize: normalizeSuperAdminKiosk
+    },
+    alertLogs: {
+      key: "id",
+      get: () => db.alertLogs,
+      set: (items) => {
+        db.alertLogs = items;
+      },
+      normalize: normalizeSuperAdminAlert
     },
     kioskAdmins: {
       key: "adminId",
@@ -4973,10 +5004,16 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   else if (tonerLow) add("toner", "Toner low", "keep a replacement toner ready", "warn");
   if (printerHealth.outputBinFull) add("paper", "Output tray full", "remove printed pages from the output tray");
   if (printerHealth.serviceRequested) add("service", "Printer service required", printerHealth.errorMessage || "service intervention required");
-  if (queueError) add("queue", "Print queue blocked", printerHealth.errorMessage || "clear the Windows print queue");
+  // Recategorized from "queue" to "service" - the Alert Center is scoped to
+  // real printer hardware issues only (paper/toner/door/bin/service); "queue"
+  // was noise (see the removed Print Job Stuck sweep) so the category itself
+  // is gone, but a genuinely blocked Windows print queue is a real,
+  // actionable printer problem (this is exactly what shows up as a failed
+  // print job), so it's kept - just filed under "service" instead.
+  if (queueError) add("service", "Print queue blocked", printerHealth.errorMessage || "clear the Windows print queue");
 
   if (alerts.length === 0 && !printerHealth.online && printerHealth.errorMessage) {
-    add("queue", "Printer Offline", printerHealth.errorMessage);
+    add("service", "Printer Offline", printerHealth.errorMessage);
   }
 
   return alerts;
@@ -5046,19 +5083,38 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
 
     newAlerts.forEach(na => {
       const existingActive = db.alertLogs.find(a => a.kioskId === kiosk.kioskId && a.title === na.title && a.status === 'active');
-      if (!existingActive) {
-         db.alertLogs.push({
-           id: "ALT-" + Date.now() + "-" + Math.floor(Math.random()*1000),
-           kioskId: kiosk.kioskId,
-           category: na.category,
-           title: na.title,
-           detail: na.detail,
-           tone: na.tone,
-           status: 'active',
-           createdAt: now,
-           resolvedAt: null
-         });
+      if (existingActive) return;
+
+      // A borderline sensor reading (e.g. paper level right at the "low"
+      // threshold) can flip active/resolved every couple of heartbeats -
+      // every single flip used to create a brand new row here, since the
+      // check above only ever looked for an *active* duplicate. Over hours
+      // of flapping that's hundreds of near-identical rows for the same
+      // kiosk+issue. Reopen the same row instead of creating a new one if it
+      // was resolved very recently - a flapping sensor toggles one row back
+      // and forth, a genuinely new incident later still gets its own row.
+      const recentlyResolved = db.alertLogs
+        .filter(a => a.kioskId === kiosk.kioskId && a.title === na.title && a.status === 'resolved' && a.resolvedAt)
+        .sort((a, b) => new Date(b.resolvedAt).getTime() - new Date(a.resolvedAt).getTime())[0];
+
+      if (recentlyResolved && (Date.now() - new Date(recentlyResolved.resolvedAt).getTime()) < ALERT_REOPEN_WINDOW_MS) {
+        recentlyResolved.status = 'active';
+        recentlyResolved.resolvedAt = null;
+        recentlyResolved.detail = na.detail;
+        return;
       }
+
+      db.alertLogs.push({
+        id: "ALT-" + Date.now() + "-" + Math.floor(Math.random()*1000),
+        kioskId: kiosk.kioskId,
+        category: na.category,
+        title: na.title,
+        detail: na.detail,
+        tone: na.tone,
+        status: 'active',
+        createdAt: now,
+        resolvedAt: null
+      });
     });
 
     db.alertLogs.filter(a => a.kioskId === kiosk.kioskId && a.status === 'active').forEach(activeAlert => {

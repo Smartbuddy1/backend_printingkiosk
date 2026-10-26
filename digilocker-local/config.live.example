@@ -1,0 +1,23 @@
+# Government API Setu / DigiLocker Requester (Meri Pehchaan OAuth).
+# Copy to this directory's .env after approval. Never commit credentials.
+# The Wi-Fi demo launcher ignores this file and remains mock-only.
+DIGILOCKER_ENABLED=true
+DIGILOCKER_MODE=live
+DIGILOCKER_LOCAL_PREVIEW=false
+DIGILOCKER_LAN_DEMO=false
+DIGILOCKER_FRONTEND_DIR=frontend
+DIGILOCKER_PORT=15238
+DIGILOCKER_MOCK_PORT=15239
+PUBLIC_BASE_URL=https://replace-with-approved-test-host.example
+DIGILOCKER_REDIRECT_URI=https://replace-with-approved-test-host.example/digilocker/callback
+DIGILOCKER_BASE_URL=https://digilocker.meripehchaan.gov.in
+DIGILOCKER_CLIENT_ID=PASTE_APPROVED_CLIENT_ID
+DIGILOCKER_CLIENT_SECRET=PASTE_APPROVED_CLIENT_SECRET
+DIGILOCKER_PURPOSE=Print selected documents at kiosk
+DIGILOCKER_SERVICE_NAME=Printing Kiosk
+# Use only document types approved in the government partner portal.
+DIGILOCKER_REQ_DOCTYPES=
+# These must be separately configured staging services, not the production kiosk.
+DIGILOCKER_KIOSK_ID=STAGING-TEST-KIOSK
+DIGILOCKER_KIOSK_BACKEND_URL=http://127.0.0.1:15237
+DIGILOCKER_KIOSK_AGENT_URL=http://127.0.0.1:15240

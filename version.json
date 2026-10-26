@@ -1,0 +1,9 @@
+{
+  "version": "1.2.19-dev.6",
+  "channel": "local-development",
+  "base": "943fea024e85e0f3684f97b83ca9a10a10640f91",
+  "frontendPort": 15248,
+  "backendPort": 15249,
+  "digilockerPort": 15250,
+  "digilockerMockPort": 15251
+}

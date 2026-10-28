@@ -79,5 +79,8 @@ for (const d of [en,hi,mr]) {
   d.PROVIDER_UNAVAILABLE=d.unavailable; d.IMAGE_TOO_LARGE=d.FILE_TOO_LARGE;
 }
 const dictionaries = { en, hi: { ...en, ...hi }, mr: { ...en, ...mr } };
+dictionaries.en.DIGILOCKER_NOT_READY = "DigiLocker is not available yet. Please use file upload.";
+dictionaries.hi.DIGILOCKER_NOT_READY = "DigiLocker अभी उपलब्ध नहीं है। कृपया फ़ाइल अपलोड का उपयोग करें।";
+dictionaries.mr.DIGILOCKER_NOT_READY = "DigiLocker अद्याप उपलब्ध नाही. कृपया फाइल अपलोड वापरा.";
 function translator(language) { const d = dictionaries[language] || en; return key => d[key] || d.generic; }
 module.exports = { dictionaries, translator };

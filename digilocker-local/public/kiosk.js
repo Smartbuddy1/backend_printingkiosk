@@ -7,13 +7,14 @@
   let poller = null, clock = null, fetching = false, records = [], received = [], message = "";
   let abort = new AbortController();
   const owned = new WeakSet();
+  const apiUrl = path => config.hosted ? new URL(path, config.apiBase || window.location.origin).href : path;
   const t = key => (config.translations[state.customerLanguage] || config.translations.en)[key] || (config.translations[state.customerLanguage] || config.translations.en).generic;
   const h = value => String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
   function redraw() { render(); }
   function normalService() { return customerServices().find(s => s.id === "print" && !isFormTemplateService(s.id)) || customerServices().find(s => !isFormTemplateService(s.id)); }
   async function request(suffix, options = {}, current = session) {
     if (!current) throw new Error("SESSION_ENDED");
-    const response = await fetch(`/api/digilocker/sessions/${current.sessionId}/${suffix}`, {
+    const response = await fetch(apiUrl(`/api/digilocker/sessions/${current.sessionId}/${suffix}`), {
       ...options, signal: options.signal || abort.signal, cache: "no-store",
       headers: { "x-kiosk-secret": current.kioskSecret, ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers }
     });
@@ -24,7 +25,7 @@
     if (!current) return;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await fetch(`/api/digilocker/sessions/${current.sessionId}/complete`, { method: "POST", keepalive: true,
+        const response = await fetch(apiUrl(`/api/digilocker/sessions/${current.sessionId}/complete`), { method: "POST", keepalive: true,
           headers: { "x-kiosk-secret": current.kioskSecret, "Content-Type": "application/json" },
           body: JSON.stringify({ result }), signal: AbortSignal.timeout(4000) });
         if (response.ok || response.status === 410) return;
@@ -111,8 +112,14 @@
     state.paymentStatus = "Pending"; state.paymentError = ""; state.printError = "";
     active = true; phase = "STARTING"; redraw();
     try {
-      const response = await fetch("/api/digilocker/sessions", { method: "POST", signal: abort.signal,
-        headers: { "Content-Type":"application/json", "x-digilocker-kiosk-key":config.kioskKey }, body:JSON.stringify({language:state.customerLanguage}) });
+      let kioskKey=config.kioskKey;
+      if(config.hosted){
+        const bootstrap=await fetch(apiUrl("/api/digilocker/bootstrap"),{signal:abort.signal,cache:"no-store"});
+        const result=await bootstrap.json();if(!bootstrap.ok)throw new Error(result.error||"unavailable");
+        if(epoch!==generation)return;kioskKey=result.kioskKey;
+      }
+      const response = await fetch(apiUrl("/api/digilocker/sessions"), { method: "POST", signal: abort.signal,
+        headers: { "Content-Type":"application/json", "x-digilocker-kiosk-key":kioskKey }, body:JSON.stringify({language:state.customerLanguage}) });
       const data = await response.json(); if (!response.ok) throw new Error(data.error || "unavailable");
       if (epoch !== generation) { void complete(data,"cancelled"); return; }
       session = data; phase = "CREATED"; redraw(); clock = setInterval(tick,1000); tick(); poller=setTimeout(()=>poll(epoch),500);
@@ -143,7 +150,7 @@
   }
   function renderButton() {
     if (state.mode !== "customer" || !normalService()) return "";
-    return `<button type="button" class="dl-launch" data-digilocker="start" ${printerReadyForCustomerFlow()?"":"disabled"} aria-label="Print from DigiLocker"><img src="/assets/digilocker-official.svg" alt="DigiLocker" width="220" height="44"></button>`;
+    return `<button type="button" class="dl-launch" data-digilocker="start" ${printerReadyForCustomerFlow()?"":"disabled"} aria-label="Print from DigiLocker"><img src="${h(config.assetBase || "/")}assets/digilocker-official.svg" alt="DigiLocker" width="220" height="44"></button>`;
   }
   function inactivityDeadline() {
     return session && ["CREATED", "PHONE_CONNECTED"].includes(phase) ? session.pairExpiresAt : null;

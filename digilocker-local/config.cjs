@@ -30,7 +30,7 @@ function loadLocalEnv(file = path.join(__dirname, ".env")) {
   }
   return values;
 }
-function makeConfig(env = {}) {
+function makeConfig(env = {}, { hosted = false } = {}) {
   const mode = env.DIGILOCKER_MODE || "mock";
   if (!["mock", "live"].includes(mode)) throw new Error("DIGILOCKER_MODE must be mock or live");
   if (mode === "mock" && ["production", "prod"].includes(String(env.NODE_ENV).toLowerCase())) throw new Error("Mock mode is local development only");
@@ -69,7 +69,7 @@ function makeConfig(env = {}) {
   // The version workspace continues to use its own frontend directory.
   const defaultFrontend = fs.existsSync(path.join(ROOT, "frontend", "app.js")) ? "frontend" : "../frontend";
   const frontend = path.resolve(ROOT, env.DIGILOCKER_FRONTEND_DIR || defaultFrontend);
-  if (!fs.existsSync(path.join(frontend, "app.js")) || !fs.existsSync(path.join(frontend, "index.html"))) throw new Error("DIGILOCKER_FRONTEND_DIR must contain the existing app.js and index.html");
+  if (!hosted && (!fs.existsSync(path.join(frontend, "app.js")) || !fs.existsSync(path.join(frontend, "index.html")))) throw new Error("DIGILOCKER_FRONTEND_DIR must contain the existing app.js and index.html");
   if (preview && mode !== "mock") throw new Error("Live mode cannot use simulated payment/printing");
   if (!preview && (!env.DIGILOCKER_KIOSK_ID || ["LOCAL-KIOSK","UNASSIGNED-KIOSK"].includes(env.DIGILOCKER_KIOSK_ID))) throw new Error("Real printing requires the explicit local test kiosk ID");
   function localService(key, fallback) {

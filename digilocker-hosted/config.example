@@ -1,0 +1,14 @@
+# Dedicated systemd environment, not the existing backend .env.
+NODE_ENV=production
+DIGILOCKER_MODE=live
+DIGILOCKER_ENABLED=false
+DIGILOCKER_PORT=5091
+PUBLIC_BASE_URL=https://api.example.com
+DIGILOCKER_REDIRECT_URI=https://api.example.com/digilocker/callback
+DIGILOCKER_ALLOWED_ORIGINS=https://www.example.com
+# Add approved credentials only on the server, then explicitly enable above.
+DIGILOCKER_CLIENT_ID=
+DIGILOCKER_CLIENT_SECRET=
+DIGILOCKER_PURPOSE="Print selected documents at kiosk"
+DIGILOCKER_SERVICE_NAME="Printing Kiosk"
+DIGILOCKER_REQ_DOCTYPES=

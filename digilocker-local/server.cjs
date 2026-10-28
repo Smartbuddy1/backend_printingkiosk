@@ -16,11 +16,12 @@ function createService(config, options = {}) {
   const provider = options.provider || new Provider(config);
   const store = new Sessions(config, { now: options.now, revoke: token => provider.revoke(token), log: options.log });
   const limiter = new RateLimiter(options.now), kioskKey = random(), kioskKeyHash = hash(kioskKey);
-  const source = fs.readFileSync(path.join(config.frontend,"app.js"),"utf8");
-  const kioskSource = config.enabled ? appOverlay(source,config) : source;
-  const sourceHtml = fs.readFileSync(path.join(config.frontend,"index.html"),"utf8");
-  const kioskHtml = config.enabled ? htmlOverlay(sourceHtml) : sourceHtml;
-  const frontendReal = fs.realpathSync(config.frontend);
+  const source = config.hosted ? "" : fs.readFileSync(path.join(config.frontend,"app.js"),"utf8");
+  const kioskSource = config.enabled && !config.hosted ? appOverlay(source,config) : source;
+  const sourceHtml = config.hosted ? "" : fs.readFileSync(path.join(config.frontend,"index.html"),"utf8");
+  const kioskHtml = config.enabled && !config.hosted ? htmlOverlay(sourceHtml) : sourceHtml;
+  const frontendReal = config.hosted ? "" : fs.realpathSync(config.frontend);
+  const bootstraps = new Map();
   function send(res,status,type,value,headers={}) {
     res.writeHead(status,{"Content-Type":type,"Cache-Control":"no-store",...headers}); res.end(value);
   }
@@ -35,6 +36,10 @@ function createService(config, options = {}) {
     return ["127.0.0.1","::1","::ffff:127.0.0.1"].includes(address) && localHost(host);
   };
   function kioskOrigin(req) {
+    if (config.hosted) {
+      if (!config.allowedOrigins.includes(req.headers.origin)) throw new Failure("NOT_AUTHORIZED",403);
+      return;
+    }
     if (!isKiosk(req)) throw new Failure("NOT_AUTHORIZED",403);
     if (req.headers.origin && req.headers.origin !== config.localOrigin) throw new Failure("NOT_AUTHORIZED",403);
   }
@@ -44,6 +49,14 @@ function createService(config, options = {}) {
     return store.phone(id,secret);
   }
   function cookie(value,maxAge) { return `dl_phone=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${config.publicBase.startsWith("https:") ? "; Secure" : ""}`; }
+  function callbackInfo(res, status = 200) {
+    return html(res,status,`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Printing Kiosk | DigiLocker callback</title></head><body><main><h1>Printing Kiosk</h1><h2>DigiLocker callback endpoint</h2><p>${config.enabled ? "Start DigiLocker from the Printing Kiosk screen. This address receives the authorization response after your consent." : "This callback address is deployed. DigiLocker access is awaiting approved credentials and activation. No documents can be accessed yet."}</p><p>Opening this address alone does not authenticate a user or confirm DigiLocker approval.</p></main></body></html>`);
+  }
+  function peer(req) {
+    const address = req.socket.remoteAddress || "unknown";
+    if (config.hosted && ["127.0.0.1","::1","::ffff:127.0.0.1"].includes(address) && require("node:net").isIP(req.headers["x-real-ip"] || "")) return req.headers["x-real-ip"];
+    return address;
+  }
   async function select(session,body) {
     if (!equalHash(body.csrf,hash(session.csrf || ""))) throw new Failure("NOT_AUTHORIZED",403);
     if (session.status !== "PHONE_CONNECTED" || !session.token) throw new Failure("STATE_INVALID",409);
@@ -80,6 +93,32 @@ function createService(config, options = {}) {
     try {
       url=new URL(req.url,"http://localhost");
       if(req.url.length>4096)throw new Failure("REQUEST_INVALID");
+      if (config.hosted) {
+        if (req.headers.host !== new URL(config.publicBase).host) throw new Failure("NOT_AUTHORIZED",403);
+        if (!(url.pathname.startsWith("/digilocker/") || url.pathname.startsWith("/api/digilocker/"))) throw new Failure("NOT_FOUND",404);
+        if (url.pathname.startsWith("/api/digilocker/")) {
+          if(req.headers.origin && !config.allowedOrigins.includes(req.headers.origin))throw new Failure("NOT_AUTHORIZED",403);
+          if(req.headers.origin)res.setHeader("Access-Control-Allow-Origin",req.headers.origin);
+          res.setHeader("Vary","Origin");
+          res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
+          res.setHeader("Access-Control-Allow-Headers","Content-Type,X-Kiosk-Secret,X-Digilocker-Kiosk-Key");
+          if (req.method === "OPTIONS") {kioskOrigin(req);return send(res,204,"text/plain","");}
+        }
+        if (req.method === "GET" && url.pathname === "/digilocker/health") return json(res,200,{service:"printing-kiosk-digilocker",mode:"live",ready:config.enabled,callback:config.redirectUri});
+        if (req.method === "GET" && url.pathname === "/digilocker/callback" && !url.search) return callbackInfo(res);
+        if (!config.enabled) {
+          if (url.pathname === "/digilocker/callback") return callbackInfo(res,503);
+          return json(res,503,{error:"DIGILOCKER_NOT_READY"});
+        }
+        if (req.method === "GET" && url.pathname === "/api/digilocker/bootstrap") {
+          kioskOrigin(req);
+          limiter.take("bootstrap:"+peer(req),20);
+          for (const [key,entry] of bootstraps) if (entry.expires <= Date.now()) bootstraps.delete(key);
+          if (bootstraps.size >= config.maxSessions * 3) throw new Failure("BUSY",503);
+          const key=random();bootstraps.set(hash(key).toString("hex"),{origin:req.headers.origin,expires:Date.now()+60000});
+          return json(res,200,{kioskKey:key});
+        }
+      }
       if(config.lanDemo){
         kioskOrigin(req);
         if(req.method === "GET" && url.pathname === "/__demo-status") return json(res,200,{version:options.version,mode:"mock",documents:"samples only",payments:"simulated",printing:"simulated"});
@@ -100,20 +139,26 @@ function createService(config, options = {}) {
       if(url.pathname.startsWith("/api/digilocker/") || url.pathname.startsWith("/digilocker/")) {
         if(!config.enabled)throw new Failure("NOT_FOUND",404);
         await store.sweep();
-        limiter.take(req.socket.remoteAddress||"unknown",600);
+        limiter.take(peer(req),600);
         if(req.method==="GET" && ["/digilocker/phone.css","/digilocker/phone.js"].includes(url.pathname)){
           const filename=url.pathname.endsWith("css")?"phone.css":"phone.js";
           return send(res,200,TYPES[path.extname(filename)]+"; charset=utf-8",fs.readFileSync(path.join(__dirname,"public",filename)));
         }
         if(req.method==="GET" && ["/digilocker/runtime.js","/digilocker/kiosk.js","/digilocker/kiosk.css"].includes(url.pathname)){
+          if(config.hosted)throw new Failure("NOT_FOUND",404);
           kioskOrigin(req);
           if(url.pathname.endsWith("runtime.js"))return send(res,200,"text/javascript; charset=utf-8",`window.DigiLockerConfig=${JSON.stringify({enabled:true,preview:config.preview,kioskKey,translations:dictionaries,maxFiles:config.maxFiles})};`);
           const filename=url.pathname.endsWith("css")?"kiosk.css":"kiosk.js";
           return send(res,200,TYPES[path.extname(filename)]+"; charset=utf-8",fs.readFileSync(path.join(__dirname,"public",filename)));
         }
         if(req.method==="POST" && url.pathname==="/api/digilocker/sessions"){
-          kioskOrigin(req);if(!equalHash(req.headers["x-digilocker-kiosk-key"],kioskKeyHash))throw new Failure("NOT_AUTHORIZED",401);
-          limiter.take("create:"+req.socket.remoteAddress,12);
+          kioskOrigin(req);
+          if(config.hosted){
+            const key=hash(String(req.headers["x-digilocker-kiosk-key"]||"")).toString("hex"),entry=bootstraps.get(key);
+            if(!entry || entry.expires<=Date.now() || entry.origin!==req.headers.origin)throw new Failure("NOT_AUTHORIZED",401);
+            bootstraps.delete(key);
+          } else if(!equalHash(req.headers["x-digilocker-kiosk-key"],kioskKeyHash))throw new Failure("NOT_AUTHORIZED",401);
+          limiter.take("create:"+peer(req),12);
           const body=await readBody(req); const created=store.create(body.language);session=created.item;
           const qrUrl=`${config.publicBase}/digilocker/start/${session.pairCode}`;
           const qrSvg=await QRCode.toString(qrUrl,{type:"svg",width:320,errorCorrectionLevel:"M",margin:4});
@@ -121,7 +166,7 @@ function createService(config, options = {}) {
         }
         const start=/^\/digilocker\/start\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
         if(req.method==="GET" && start){
-          limiter.take("phone:"+req.socket.remoteAddress,30);
+          limiter.take("phone:"+peer(req),30);
           const paired=store.pair(start[1]);session=paired.session;
           res.setHeader("Set-Cookie",cookie(`${session.id}.${paired.phone}`,Math.ceil(config.sessionTtl/1000)));
           const authorization=new URL(provider.authorize(paired));
@@ -129,7 +174,7 @@ function createService(config, options = {}) {
           res.writeHead(302,{Location:authorization.href,"Cache-Control":"no-store"});return res.end();
         }
         if(req.method==="GET" && url.pathname==="/digilocker/callback"){
-          limiter.take("callback:"+req.socket.remoteAddress,30);
+          limiter.take("callback:"+peer(req),30);
           session=store.consumeState(url.searchParams.get("state"),cookies(req).dl_phone);
           if(url.searchParams.has("error")){
             const denied=url.searchParams.get("error")==="access_denied";await store.end(session,denied?"DENIED":"FAILED");res.setHeader("Set-Cookie",cookie("",0));
@@ -200,6 +245,7 @@ function createService(config, options = {}) {
         throw new Failure("NOT_FOUND",404);
       }
       // The local kiosk shell is never exposed on the phone/tunnel host.
+      if(config.hosted)throw new Failure("NOT_FOUND",404);
       kioskOrigin(req);
       res.setHeader("Content-Security-Policy",`default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' data:; connect-src 'self' ${config.preview?"":config.agent}; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'`);
       if(req.method==="GET" && ["/","/index.html"].includes(url.pathname))return html(res,200,config.lanDemo?kioskHtml.replace('<body>', '<body><div role="status" style="position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#fff3c4;color:#473900;text-align:center;font:13px sans-serif;padding:6px;pointer-events:none">Wi-Fi demo '+String(options.version||'')+' — sample documents only; payment and printing are simulated</div>'):kioskHtml);

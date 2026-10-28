@@ -4,10 +4,10 @@ function once(source, before, after, label) {
   if (source.split(before).length !== 2) throw new Error(`Unsupported kiosk source at ${label}; original files were not changed`);
   return source.replace(before, after);
 }
-function appOverlay(source, { preview = false } = {}) {
+function appOverlay(source, { preview = false, hosted = false } = {}) {
   // These tiny connections are applied to the HTTP response, never to source files.
   let result = once(source, "function renderCustomerStep() {", "function renderCustomerStep() {\n  if (window.DigilockerUI?.isActive()) return window.DigilockerUI.render();", "screen registry");
-  result = once(result, "const DEMO_KIOSK_MODE =", `const DEMO_KIOSK_MODE = ${preview ? "true" : "false"};\nconst digilockerOriginalDemoSetting =`, "explicit preview mode");
+  if (!hosted) result = once(result, "const DEMO_KIOSK_MODE =", `const DEMO_KIOSK_MODE = ${preview ? "true" : "false"};\nconst digilockerOriginalDemoSetting =`, "explicit preview mode");
   result = once(result, '<h1>Printing Kiosk</h1>', '<h1>Printing Kiosk</h1>\n        ${window.DigilockerUI?.renderButton() || ""}', "DigiLocker heading placement");
   result = once(result, "function resetCustomer() {", "function digilockerOriginalResetCustomer() {", "reset");
   result = once(result, "function clearCurrentFile() {", "function digilockerOriginalClearCurrentFile() {", "clear documents");

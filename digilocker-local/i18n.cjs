@@ -83,4 +83,7 @@ dictionaries.en.DIGILOCKER_NOT_READY = "DigiLocker is not available yet. Please 
 dictionaries.hi.DIGILOCKER_NOT_READY = "DigiLocker अभी उपलब्ध नहीं है। कृपया फ़ाइल अपलोड का उपयोग करें।";
 dictionaries.mr.DIGILOCKER_NOT_READY = "DigiLocker अद्याप उपलब्ध नाही. कृपया फाइल अपलोड वापरा.";
 function translator(language) { const d = dictionaries[language] || en; return key => d[key] || d.generic; }
+Object.assign(dictionaries.en, { DIGILOCKER_KIOSK_DISABLED: "DigiLocker is not enabled for this kiosk. Please use file upload.", DIGILOCKER_KIOSK_UNAVAILABLE: "Cannot check this kiosk's DigiLocker setting. Please try again." });
+Object.assign(dictionaries.hi, { DIGILOCKER_KIOSK_DISABLED: "इस कियोस्क पर DigiLocker चालू नहीं है। कृपया फ़ाइल अपलोड करें।", DIGILOCKER_KIOSK_UNAVAILABLE: "कियोस्क की DigiLocker सेटिंग जाँची नहीं जा सकी। कृपया फिर कोशिश करें।" });
+Object.assign(dictionaries.mr, { DIGILOCKER_KIOSK_DISABLED: "या किऑस्कवर DigiLocker सुरू नाही. कृपया फाइल अपलोड करा.", DIGILOCKER_KIOSK_UNAVAILABLE: "किऑस्कची DigiLocker सेटिंग तपासता आली नाही. कृपया पुन्हा प्रयत्न करा." });
 module.exports = { dictionaries, translator };

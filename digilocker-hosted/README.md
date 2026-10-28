@@ -34,3 +34,20 @@ service drops pending sessions. Run one process; no shared session store is used
 Offline checks: `node --test digilocker-hosted/test/hosted.test.cjs`. Tests inject
 an offline provider and never contact the government API. Do not put real secrets,
 uploads, session records or environment files in Git or deployment archives.
+
+## Per-kiosk availability
+
+Super Admin > Kiosks > Edit > Kiosk Customer Print Options includes a DigiLocker
+checkbox alongside B/W and colour. It is unchecked for new and existing kiosks
+until explicitly enabled. The setting is stored in `customerSettings.digilocker`
+using the existing kiosk persistence; no database schema migration is needed.
+The kiosk-admin summary also displays this setting.
+
+The hosted frontend hides the DigiLocker button when unchecked. New sessions carry
+the configured kiosk ID, and the callback service independently checks the saved
+setting through the existing loopback backend `/api/kiosk/config`. Missing,
+unknown or disabled kiosks are rejected; backend lookup failures fail closed.
+The setting is checked for each new session, without a stale policy cache.
+Sessions already accepted may finish so disabling a service does not interrupt
+an in-progress paid job. This switch does not replace the global credential and
+approval requirements. The isolated mock preview retains its demo button.

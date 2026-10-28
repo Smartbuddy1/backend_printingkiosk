@@ -1077,6 +1077,7 @@ function servicesForPublicScope(scope = {}) {
 }
 
 const DEFAULT_KIOSK_CUSTOMER_SETTINGS = Object.freeze({
+  digilocker: false,
   bw: true,
   color: true,
   copies: true,
@@ -1094,7 +1095,7 @@ function normalizeKioskCustomerSettings(settings = {}, existing = {}) {
   };
 
   const normalized = Object.fromEntries(
-    Object.keys(DEFAULT_KIOSK_CUSTOMER_SETTINGS).map((key) => [key, source[key] !== false])
+    Object.keys(DEFAULT_KIOSK_CUSTOMER_SETTINGS).map((key) => [key, key === "digilocker" ? source[key] === true : source[key] !== false])
   );
 
   if (!normalized.bw && !normalized.color) {

@@ -3,19 +3,24 @@ const test=require("node:test"),assert=require("node:assert/strict"),http=requir
 const {hostedConfig}=require("../config.cjs");
 const {createService}=require("../../digilocker-local/server.cjs");
 const {Provider}=require("../../digilocker-local/provider.cjs");
+const {requireKioskEnabled}=require("../../digilocker-local/kiosk-policy.cjs");
 const env={PUBLIC_BASE_URL:"https://api.example.test",DIGILOCKER_ALLOWED_ORIGINS:"https://kiosk.example.test",DIGILOCKER_PORT:"0"};
 const origin="https://kiosk.example.test";
 async function setup(t,enabled=false){
   const config=hostedConfig({...env,...(enabled?{DIGILOCKER_ENABLED:"true",DIGILOCKER_CLIENT_ID:"offline-test",DIGILOCKER_CLIENT_SECRET:"offline-test",DIGILOCKER_REDIRECT_URI:env.PUBLIC_BASE_URL+"/digilocker/callback"}:{})});
   const audit={tokens:0,revoked:0};
   const provider={authorize:p=>new Provider(config).authorize(p),token:async()=>{audit.tokens++;return {accessToken:"offline-token",scope:"openid"};},list:async()=>new Map([["test-uri",{uri:"test-uri",name:"Test",mime:"application/pdf"}]]),download:async()=>({name:"Test",mime:"application/pdf",pages:1,size:5,bytes:Buffer.from("%PDF-")}),revoke:async()=>{audit.revoked++;}};
-  const app=createService(config,{provider});
+  const policies=new Map([["KIOSK-ON",true],["KIOSK-OFF",false]]);
+  const app=createService(config,{provider,kioskPolicy:id=>requireKioskEnabled(config,id,async url=>{
+    const kioskId=new URL(url).searchParams.get("kioskId");
+    return new Response(JSON.stringify({kiosk:policies.has(kioskId)?{kioskId,customerSettings:{digilocker:policies.get(kioskId)}}:null}));
+  })});
   await new Promise(r=>app.server.listen(0,"127.0.0.1",r));t.after(()=>app.close());
   function request(path,{method="GET",headers={},body}={}){return new Promise((resolve,reject)=>{
     const req=http.request({hostname:"127.0.0.1",port:app.server.address().port,path,method,headers:{Host:"api.example.test",...headers}},res=>{const chunks=[];res.on("data",c=>chunks.push(c));res.on("end",()=>{const text=Buffer.concat(chunks).toString();resolve({status:res.statusCode,headers:res.headers,text,json:()=>JSON.parse(text)});});});req.on("error",reject);req.end(body);
   });}
-  async function create(){const bootstrap=await request("/api/digilocker/bootstrap",{headers:{Origin:origin}});assert.equal(bootstrap.status,200);const key=bootstrap.json().kioskKey;const headers={Origin:origin,"Content-Type":"application/json","X-Digilocker-Kiosk-Key":key};const result=await request("/api/digilocker/sessions",{method:"POST",headers,body:'{"language":"en"}'});assert.equal(result.status,201);return {...result.json(),createHeaders:headers};}
-  return {app,audit,request,create,config};
+  async function create(){const bootstrap=await request("/api/digilocker/bootstrap",{headers:{Origin:origin}});assert.equal(bootstrap.status,200);const key=bootstrap.json().kioskKey;const headers={Origin:origin,"Content-Type":"application/json","X-Digilocker-Kiosk-Key":key};const result=await request("/api/digilocker/sessions",{method:"POST",headers,body:'{"language":"en","kioskId":"KIOSK-ON"}'});assert.equal(result.status,201);return {...result.json(),createHeaders:headers};}
+  return {app,audit,request,create,config,policies};
 }
 test("hosted configuration rejects mock, HTTP, unapproved activation and foreign provider",()=>{
   for(const extra of [{DIGILOCKER_MODE:"mock"},{PUBLIC_BASE_URL:"http://api.example.test"},{DIGILOCKER_ENABLED:"true"},{DIGILOCKER_LOCAL_PREVIEW:"true"},{DIGILOCKER_BASE_URL:"https://other.example.test"},{DIGILOCKER_ALLOWED_ORIGINS:"https://kiosk.example.test/path"}])assert.throws(()=>hostedConfig({...env,...extra}));
@@ -63,4 +68,21 @@ test("hosted consent denial issues no token",async t=>{
   const state=new URL(start.headers.location).searchParams.get("state"),cookie=start.headers["set-cookie"][0].split(";")[0];
   assert.equal((await s.request("/digilocker/callback?error=access_denied&state="+state,{headers:{Cookie:cookie}})).status,200);
   assert.equal(s.audit.tokens,0);assert.equal(s.app.store.items.get(a.sessionId).status,"DENIED");
+});
+test("per-kiosk switch rejects disabled, unknown and forged settings, and takes effect on the next session",async t=>{
+  const s=await setup(t,true);
+  async function createFor(kioskId){const key=(await s.request("/api/digilocker/bootstrap",{headers:{Origin:origin}})).json().kioskKey;
+    return s.request("/api/digilocker/sessions",{method:"POST",headers:{Origin:origin,"Content-Type":"application/json","X-Digilocker-Kiosk-Key":key},body:JSON.stringify({kioskId,language:"en",digilocker:true,customerSettings:{digilocker:true}})});
+  }
+  for(const id of [undefined,"KIOSK-OFF","KIOSK-UNKNOWN","LOCAL-KIOSK"]){const r=await createFor(id);assert.equal(r.status,403);assert.equal(r.json().error,"DIGILOCKER_KIOSK_DISABLED");}
+  assert.equal(s.app.store.items.size,0);
+  const a=(await createFor("KIOSK-ON")).json();assert.equal(s.app.store.items.get(a.sessionId).kioskId,"KIOSK-ON");
+  s.policies.set("KIOSK-ON",false);assert.equal((await createFor("KIOSK-ON")).status,403);
+  s.policies.set("KIOSK-OFF",true);assert.equal((await createFor("KIOSK-OFF")).status,201);
+  assert.equal(s.audit.tokens,0);
+});
+test("kiosk policy fails closed on unavailable or mismatched backend configuration",async()=>{
+  const config={backend:"http://127.0.0.1:5080"};
+  for(const request of [async()=>{throw new Error("offline");},async()=>new Response("bad",{status:500}),async()=>new Response("invalid json")])await assert.rejects(requireKioskEnabled(config,"KIOSK-ON",request),e=>e.code==="DIGILOCKER_KIOSK_UNAVAILABLE");
+  for(const kiosk of [null,{kioskId:"OTHER",customerSettings:{digilocker:true}},{kioskId:"KIOSK-ON"},{kioskId:"KIOSK-ON",customerSettings:{digilocker:"true"}}])await assert.rejects(requireKioskEnabled(config,"KIOSK-ON",async()=>new Response(JSON.stringify({kiosk}))),e=>e.code==="DIGILOCKER_KIOSK_DISABLED");
 });

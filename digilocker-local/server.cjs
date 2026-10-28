@@ -159,7 +159,9 @@ function createService(config, options = {}) {
             bootstraps.delete(key);
           } else if(!equalHash(req.headers["x-digilocker-kiosk-key"],kioskKeyHash))throw new Failure("NOT_AUTHORIZED",401);
           limiter.take("create:"+peer(req),12);
-          const body=await readBody(req); const created=store.create(body.language);session=created.item;
+          const body=await readBody(req);
+          const kioskId=config.hosted ? await (options.kioskPolicy || (id=>require("./kiosk-policy.cjs").requireKioskEnabled(config,id)))(body.kioskId) : config.kioskId;
+          const created=store.create(body.language);session=created.item;session.kioskId=kioskId;
           const qrUrl=`${config.publicBase}/digilocker/start/${session.pairCode}`;
           const qrSvg=await QRCode.toString(qrUrl,{type:"svg",width:320,errorCorrectionLevel:"M",margin:4});
           return json(res,201,{sessionId:session.id,kioskSecret:created.kioskSecret,pairCode:session.pairCode,expiresAt:session.expiresAt,pairExpiresAt:session.pairExpiresAt,qrUrl,qrSvg});

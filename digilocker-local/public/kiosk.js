@@ -12,6 +12,7 @@
   const h = value => String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
   function redraw() { render(); }
   function normalService() { return customerServices().find(s => s.id === "print" && !isFormTemplateService(s.id)) || customerServices().find(s => !isFormTemplateService(s.id)); }
+  function kioskPermitted() { return config.preview === true || state.kioskCustomerSettings?.digilocker === true; }
   async function request(suffix, options = {}, current = session) {
     if (!current) throw new Error("SESSION_ENDED");
     const response = await fetch(apiUrl(`/api/digilocker/sessions/${current.sessionId}/${suffix}`), {
@@ -105,6 +106,7 @@
     if (session && Date.now() >= session.expiresAt && phase !== "PRINTING") fail("ended");
   }
   async function start() {
+    if (!kioskPermitted()) return;
     const service = normalService(); if (!service || !printerReadyForCustomerFlow()) return;
     cancel(); const epoch = generation;
     clearCurrentFile(); stopUploadPolling(); stopPaymentPolling();
@@ -119,7 +121,7 @@
         if(epoch!==generation)return;kioskKey=result.kioskKey;
       }
       const response = await fetch(apiUrl("/api/digilocker/sessions"), { method: "POST", signal: abort.signal,
-        headers: { "Content-Type":"application/json", "x-digilocker-kiosk-key":kioskKey }, body:JSON.stringify({language:state.customerLanguage}) });
+        headers: { "Content-Type":"application/json", "x-digilocker-kiosk-key":kioskKey }, body:JSON.stringify({language:state.customerLanguage,kioskId:KIOSK_ID}) });
       const data = await response.json(); if (!response.ok) throw new Error(data.error || "unavailable");
       if (epoch !== generation) { void complete(data,"cancelled"); return; }
       session = data; phase = "CREATED"; redraw(); clock = setInterval(tick,1000); tick(); poller=setTimeout(()=>poll(epoch),500);
@@ -149,7 +151,7 @@
     } catch(error) { if(epoch===generation)fail(error.message); }
   }
   function renderButton() {
-    if (state.mode !== "customer" || !normalService()) return "";
+    if (state.mode !== "customer" || !normalService() || !kioskPermitted()) return "";
     return `<button type="button" class="dl-launch" data-digilocker="start" ${printerReadyForCustomerFlow()?"":"disabled"} aria-label="Print from DigiLocker"><img src="${h(config.assetBase || "/")}assets/digilocker-official.svg" alt="DigiLocker" width="220" height="44"></button>`;
   }
   function inactivityDeadline() {

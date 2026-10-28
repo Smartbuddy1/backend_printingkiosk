@@ -1,0 +1,22 @@
+[Unit]
+Description=Printing Kiosk DigiLocker OAuth service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/ABSOLUTE/PATH/TO/backend_printingkiosk
+EnvironmentFile=/etc/printing-kiosk/digilocker.env
+ExecStart=/usr/bin/node /ABSOLUTE/PATH/TO/backend_printingkiosk/digilocker-hosted/start.cjs
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

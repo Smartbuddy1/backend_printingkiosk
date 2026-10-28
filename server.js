@@ -454,7 +454,7 @@ function normalizeServices(services) {
       seen.add(id);
 
       const fallback = DEFAULT_SERVICES.find((item) => item.id === id) || {};
-      const mode = service?.mode === "template" ? "template" : "upload";
+      const mode = ["template", "digilocker"].includes(service?.mode) ? service.mode : "upload";
 
       return {
         id,
@@ -921,6 +921,10 @@ function serviceAppliesToKiosk(service = {}, kiosk = null, kioskId = "") {
   const projectIds = Array.isArray(service.projectIds) ? service.projectIds.map((item) => slug(item, "")).filter(Boolean) : [];
   const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((item) => normalizeKioskCode(item)).filter(Boolean) : [];
 
+  if (service.mode === "digilocker" && kioskIds.length > 0) {
+    return Boolean(id && kioskIds.includes(id));
+  }
+
   if (kioskIds.length === 0 && projectIds.length === 0) {
     return true;
   }
@@ -1123,7 +1127,10 @@ function kioskConfigResponse(kioskId = "") {
       scanner: kiosk.scanner,
       appVersion: kiosk.appVersion,
       lastOnline: kiosk.lastOnline,
-      customerSettings: normalizeKioskCustomerSettings(kiosk.customerSettings),
+      customerSettings: {
+        ...normalizeKioskCustomerSettings(kiosk.customerSettings),
+        digilocker: filteredServices.some((service) => service.mode === "digilocker")
+      },
       clientBrand
     } : null,
     clientBrand,

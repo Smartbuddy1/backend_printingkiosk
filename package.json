@@ -8,7 +8,11 @@
     "demo:digilocker": "node tools/digilocker-demo.cjs",
     "test:digilocker": "node --test digilocker-local/test/core.test.cjs digilocker-local/test/integration.test.cjs digilocker-local/test/cleanup.test.cjs digilocker-local/test/lan.test.cjs",
     "start:digilocker": "node digilocker-hosted/start.cjs",
-    "test:digilocker-hosted": "node --test digilocker-hosted/test/hosted.test.cjs"
+    "test:digilocker-hosted": "node --test digilocker-hosted/test/hosted.test.cjs",
+    "kiosk:update": "node managed-update/cli.cjs",
+    "kiosk:build": "node managed-update/release.cjs",
+    "setup:kiosk-updates": "node managed-update/configure-server.cjs",
+    "test:kiosk-updates": "node --test managed-update/test/*.test.cjs managed-update/test/deployment.cjs"
   },
   "license": "MIT",
   "dependencies": {

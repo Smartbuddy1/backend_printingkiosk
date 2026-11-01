@@ -10,3 +10,9 @@ admin-sessions.json
 mobile-upload-sessions.json
 backend.log
 uploads/
+
+# Managed update runtime and private signing material
+.managed-update/
+.secrets/
+*.pkrelease
+*.pkupdate

@@ -4109,6 +4109,7 @@ function normalizeKioskRelease(record = {}, existing = {}) {
 }
 
 function validateReleaseRecord(release) {
+  if (release?.format === "printing-kiosk-files-v1") return require("./managed-update/backend.cjs").validate(release, db.kiosks);
   if (!release?.version) return "Release version is required.";
   if (!/^https:\/\//i.test(release.downloadUrl)) return "Release download URL must use HTTPS.";
   if (!/^[a-f0-9]{64}$/i.test(release.sha256)) return "Release SHA-256 must contain 64 hexadecimal characters.";
@@ -4152,6 +4153,7 @@ function releaseForKiosk(kiosk, currentVersion, requestedChannel = "") {
     : "production";
 
   return db.releases
+    .filter(release => release.format !== "printing-kiosk-files-v1")
     .filter((release) => release.active && release.channel === channel)
     .filter((release) => compareReleaseVersions(release.version, currentVersion) > 0)
     .filter((release) => releaseRolloutIncludesKiosk(release, kiosk.kioskId))
@@ -4559,6 +4561,7 @@ function findCollectionItem(config, itemId) {
 }
 
 function validateSuperAdminRecord(collection, record, existing = null) {
+  if (collection === "releases" && (record?.format === "printing-kiosk-files-v1" || existing?.format === "printing-kiosk-files-v1")) return require("./managed-update/backend.cjs").validate(record, db.kiosks, existing);
   if (collection === "releases") {
     return validateReleaseRecord(record);
   }
@@ -4912,6 +4915,10 @@ const server = http.createServer(async (req, res) => {
     if (!requireAdminSession(req, res, "super-admin")) return;
   }
 
+  if (await require("./managed-update/backend.cjs").handle(req, res, url, body, {
+    db, validateSetup: validateKioskActivationRequest, validateDevice: validateKioskDevice,
+    save: () => saveData(), json
+  })) return;
   if (req.method === "GET" && url.pathname === "/api/kiosk/update/manifest") {
     const validation = validateKioskDevice(Object.fromEntries(url.searchParams.entries()));
     if (validation.error) return json(res, validation.status, { error: validation.error });

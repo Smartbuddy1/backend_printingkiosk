@@ -1,0 +1,24 @@
+'use strict';
+const { test } = require('node:test'), assert = require('node:assert/strict');
+const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), crypto = require('node:crypto');
+const { configure } = require('../configure-server.cjs');
+test('server setup preserves existing configuration, backs it up once and stays idempotent', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kiosk-config-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'managed-update'));
+  const key = crypto.generateKeyPairSync('rsa', { modulusLength: 3072 });
+  fs.writeFileSync(path.join(root, 'managed-update/public-keys.json'), JSON.stringify({ primary: key.publicKey.export({ type: 'spki', format: 'pem' }) }));
+  const original = '# existing\nDATABASE_URL="test-only"\nPORT=5080\nMANAGED_UPDATE_PUBLIC_BASE="https://old.example"\n';
+  fs.writeFileSync(path.join(root, '.env'), original);
+  assert.throws(() => configure(root, 'http://example.com'), /HTTPS/);
+  assert.equal(fs.readFileSync(path.join(root, '.env'), 'utf8'), original);
+  configure(root, 'https://api.example.com');
+  const first = fs.readFileSync(path.join(root, '.env'), 'utf8');
+  assert.match(first, /DATABASE_URL="test-only"\nPORT=5080/);
+  assert.equal((first.match(/MANAGED_UPDATE_PUBLIC_BASE=/g) || []).length, 1);
+  configure(root, 'https://api.example.com');
+  assert.equal(fs.readFileSync(path.join(root, '.env'), 'utf8'), first);
+  const backups = fs.readdirSync(path.join(root, '.managed-update')).filter(n => n.endsWith('.backup'));
+  assert.equal(backups.length, 1);
+  assert.equal(fs.readFileSync(path.join(root, '.managed-update', backups[0]), 'utf8'), original);
+});

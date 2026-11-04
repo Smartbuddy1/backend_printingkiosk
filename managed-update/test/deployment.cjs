@@ -10,7 +10,7 @@ const root = path.resolve(__dirname, '../..');
 test('deployment backend: auth, enrollment, signed upload, CLI target/pause, persistence and legacy isolation', { timeout: 45000 }, async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kiosk-deploy-test-'));
   fs.mkdirSync(path.join(dir, 'managed-update'));
-  for (const name of ['server.js', 'rds-store.js']) fs.copyFileSync(path.join(root, name), path.join(dir, name));
+  for (const name of ['server.js', 'rds-store.js', 'scanner.cjs']) fs.copyFileSync(path.join(root, name), path.join(dir, name));
   for (const name of ['backend.cjs', 'protocol.cjs', 'artifacts.cjs', 'transaction.cjs']) fs.copyFileSync(path.join(root, 'managed-update', name), path.join(dir, 'managed-update', name));
   // .env loading is disabled only in the disposable fixture, never in shipped source.
   fs.writeFileSync(path.join(dir, 'load-env.js'), 'exports.loadEnv = () => ({});');
@@ -71,6 +71,12 @@ test('deployment backend: auth, enrollment, signed upload, CLI target/pause, per
     assert.equal((await req('/api/super-admin/kiosks', { kioskId, name: 'Test fixture', projectId, setupCode }, admin)).status, 201);
     assert.equal((await req('/api/kiosk/setup/activate', { kioskId, setupCode, deviceId })).status, 200);
   }
+  const scanId='fixture-scanner';
+  assert.equal((await req('/api/super-admin/services', {id:scanId,title:'Scan & Print',mode:'scan',enabled:true,kioskIds:[ids[0]],projectIds:[projectId]},admin)).status,201);
+  const scanConfig=(await req('/api/kiosk/config?kioskId='+ids[0])).data;
+  assert.equal(scanConfig.services.find(s=>s.id===scanId)?.mode,'scan');
+  assert.equal((await req('/api/scanner/capture',{})).status,503,'EC2 cannot access scanner hardware');
+  assert.equal((await req('/api/super-admin/services/'+scanId,{enabled:false},admin,'PUT')).status,200);
   const identity = { kioskId: ids[0], deviceId, channel: 'staging' };
   assert.equal((await req('/api/kiosk/managed-update/enroll', { ...identity, setupCode: 'WRONG' })).status, 403);
   const enrolled = await req('/api/kiosk/managed-update/enroll', { ...identity, setupCode }); assert.equal(enrolled.status, 200);

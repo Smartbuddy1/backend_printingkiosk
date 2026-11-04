@@ -146,6 +146,8 @@ const FRONTEND_FILES = new Set([
   "admin.html",
   "super-admin.html",
   "styles.css",
+  "scanner.css",
+  "scanner.js",
   "ui-icons.js",
   "app.js",
   "super-admin.js"
@@ -171,10 +173,10 @@ const DEFAULT_SERVICES = [
   {
     id: "scan",
     icon: "SC",
-    title: "Scan Document",
-    description: "Scan paper documents to PDF with receipt and admin tracking.",
+    title: "Scan & Print",
+    description: "Scan paper documents, preview and pay to print.",
     defaultPages: 3,
-    mode: "upload",
+    mode: "scan",
     imageUrl: "",
     enabled: true,
     kioskIds: [],
@@ -454,7 +456,7 @@ function normalizeServices(services) {
       seen.add(id);
 
       const fallback = DEFAULT_SERVICES.find((item) => item.id === id) || {};
-      const mode = ["template", "digilocker"].includes(service?.mode) ? service.mode : "upload";
+      const mode = ["template", "digilocker", "scan"].includes(service?.mode) ? service.mode : id === "scan" ? "scan" : "upload";
 
       return {
         id,
@@ -4768,12 +4770,15 @@ async function handleSuperAdminCollection(req, res, collection, itemId, body) {
 // a retry after a slow response) can't both pass the "no pending payment
 // yet" check and each create a separate Razorpay order/QR.
 const paymentCreationLocks = new Map();
+// Capture belongs to the loopback Windows kiosk bridge, never EC2.
+const handleScannerRequest = require("./scanner.cjs").scannerHandler();
 
 const server = http.createServer(async (req, res) => {
  try {
   if (req.method === "OPTIONS") return json(res, 200, { ok: true });
 
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (url.pathname === "/api/scanner/capture") return handleScannerRequest(req, res);
 
   if (req.method === "POST" && url.pathname === "/api/payment/webhook") {
     const rawBody = await readRawBody(req);

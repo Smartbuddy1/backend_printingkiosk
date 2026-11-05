@@ -2555,7 +2555,9 @@ function paymentPageUrl(req, paymentId) {
   url.search = "";
   url.hash = "";
   url.searchParams.set("mobilePayment", paymentId);
-  url.searchParams.set("backendUrl", backendOrigin(req));
+  // The public frontend proxies /api to the backend. Phones must not receive
+  // the backend's internal loopback/HTTP address in their checkout link.
+  url.searchParams.set("backendUrl", new URL(pageOrigin).origin);
   return url.toString();
 }
 

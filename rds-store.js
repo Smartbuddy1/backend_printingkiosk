@@ -155,14 +155,16 @@ async function saveSetting(client, key, data) {
   );
 }
 
-async function saveSnapshot(snapshot) {
+async function saveSnapshot(snapshot, { services = false } = {}) {
   const client = await getPool().connect();
 
   try {
     await client.query("BEGIN");
     await replaceCollection(client, "jobs", snapshot.jobs);
     await replaceCollection(client, "payments", snapshot.payments);
-    await replaceCollection(client, "services", snapshot.services);
+    // Jobs, pricing and heartbeat saves must not replace the forms catalogue
+    // from a possibly stale in-memory copy. Only an explicit service save may.
+    if (services) await replaceCollection(client, "services", snapshot.services);
     await replaceCollection(client, "kiosks", snapshot.kiosks);
     // Alert history is append/update-only (rows are never removed, only marked
     // resolved) - upsert here instead of the destructive delete-then-reinsert

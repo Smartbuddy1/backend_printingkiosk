@@ -14,5 +14,6 @@ uploads/
 # Managed update runtime and private signing material
 .managed-update/
 .secrets/
+.service-history/
 *.pkrelease
 *.pkupdate

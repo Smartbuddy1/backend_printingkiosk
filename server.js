@@ -441,7 +441,7 @@ function normalizeServicePrintDefaults(defaults = {}, existing = {}) {
 }
 
 function normalizeServices(services) {
-  const source = Array.isArray(services) && services.length ? services : DEFAULT_SERVICES;
+  const source = Array.isArray(services) ? services : DEFAULT_SERVICES;
   const seen = new Set();
 
   return source
@@ -474,7 +474,8 @@ function normalizeServices(services) {
         projectIds: Array.isArray(service?.projectIds)
           ? service.projectIds.map((item) => slug(item, "")).filter(Boolean)
           : String(service?.projectIds || "").split(",").map((item) => slug(item, "")).filter(Boolean),
-        kioskIds: Array.isArray(service?.kioskIds) ? service.kioskIds.map((item) => String(item).trim()).filter(Boolean) : [],
+        kioskIds: Array.isArray(service?.kioskIds) ? service.kioskIds.map((item) => normalizeKioskCode(item)).filter(Boolean) : [],
+        excludedKioskIds: Array.isArray(service?.excludedKioskIds) ? service.excludedKioskIds.map((item) => normalizeKioskCode(item)).filter(Boolean) : [],
         customerSettings: normalizeServiceCustomerSettings(service?.customerSettings, fallback.customerSettings),
         printDefaults: normalizeServicePrintDefaults(service?.printDefaults, fallback.printDefaults),
         pricing: {
@@ -687,19 +688,8 @@ function createRuntimeDb(persistedData = {}, persistedSettings = {}) {
     projectId: kiosk.projectId || projects[0]?.projectId || "default-project",
     ...kiosk
   }));
-  const kioskProjects = [...new Set(kiosks.map((kiosk) => slug(kiosk.projectId, "")).filter(Boolean))];
-  const services = persistedServices.map((service) => {
-    if (service.projectIds.length) return { ...service, kioskIds: [] };
-
-    const legacyKioskIds = new Set(service.kioskIds.map((kioskId) => normalizeKioskCode(kioskId)));
-    const legacyProjects = legacyKioskIds.size
-      ? kioskProjects.filter((projectId) => kiosks.some((kiosk) => (
-          projectId === kiosk.projectId && legacyKioskIds.has(normalizeKioskCode(kiosk.kioskId))
-        )))
-      : kioskProjects;
-
-    return { ...service, projectIds: legacyProjects, kioskIds: [] };
-  });
+  // Keep explicit kiosk assignments intact across every restart.
+  const services = persistedServices;
 
   return {
     jobs: Array.isArray(persistedData.jobs) ? persistedData.jobs : [],
@@ -808,11 +798,11 @@ async function persistWithRetry(saveFn, label, maxAttempts = 3) {
   }
 }
 
-function persistDatabaseSnapshot() {
+function persistDatabaseSnapshot(options = {}) {
   if (!rdsStore.enabled()) return Promise.resolve({ ok: true });
 
   const snapshot = clonedDataSnapshot();
-  const attempt = databaseSaveQueue.then(() => persistWithRetry(() => rdsStore.saveSnapshot(snapshot), "snapshot"));
+  const attempt = databaseSaveQueue.then(() => persistWithRetry(() => rdsStore.saveSnapshot(snapshot, options), "snapshot"));
   databaseSaveQueue = attempt;
   return attempt;
 }
@@ -847,9 +837,9 @@ function saveSettings() {
   return Promise.resolve({ ok: true });
 }
 
-function saveData() {
+function saveData(options = {}) {
   const result = rdsStore.enabled()
-    ? persistDatabaseSnapshot()
+    ? persistDatabaseSnapshot(options)
     : (writeJsonAtomic(DATA_PATH, dataSnapshot()), Promise.resolve({ ok: true }));
 
   broadcastDataChanged();
@@ -923,7 +913,9 @@ function serviceAppliesToKiosk(service = {}, kiosk = null, kioskId = "") {
   const projectIds = Array.isArray(service.projectIds) ? service.projectIds.map((item) => slug(item, "")).filter(Boolean) : [];
   const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((item) => normalizeKioskCode(item)).filter(Boolean) : [];
 
-  if (service.mode === "digilocker" && kioskIds.length > 0) {
+  if ((service.excludedKioskIds || []).map(value => normalizeKioskCode(value)).includes(id)) return false;
+
+  if (kioskIds.length > 0) {
     return Boolean(id && kioskIds.includes(id));
   }
 
@@ -1206,7 +1198,7 @@ async function initializePersistence() {
     return;
   }
 
-  await rdsStore.saveSnapshot(clonedDataSnapshot());
+  await rdsStore.saveSnapshot(clonedDataSnapshot(), { services: true });
   console.log("Seeded PostgreSQL/RDS from local default data.");
 }
 
@@ -1214,7 +1206,7 @@ function json(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Razorpay-Signature, X-Razorpay-Event-Id",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Razorpay-Signature, X-Razorpay-Event-Id, X-Kiosk-Config-Version",
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
   });
   res.end(JSON.stringify(body, null, 2));
@@ -2273,14 +2265,9 @@ function servicesForAdmin(session = {}, kioskId = "") {
     return db.services.filter((service) => serviceAppliesToKiosk(service, kiosk, requestedKioskId));
   }
 
-  return db.services.filter((service) => {
-    const projectIds = Array.isArray(service.projectIds) ? service.projectIds.map((item) => slug(item, "")).filter(Boolean) : [];
-    const kioskIds = Array.isArray(service.kioskIds) ? service.kioskIds.map((id) => normalizeKioskCode(id)).filter(Boolean) : [];
-
-    if (projectIds.length) return projectIds.some((id) => allowedProjects.has(id));
-    if (kioskIds.length) return kioskIds.some((id) => allowed.has(id));
-    return true;
-  });
+  return db.services.filter(service => db.kiosks.some(kiosk =>
+    allowed.has(normalizeKioskCode(kiosk.kioskId)) && serviceAppliesToKiosk(service, kiosk)
+  ));
 }
 
 function pricingForServices(serviceList = [], kioskIds = null) {
@@ -2329,7 +2316,21 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
   }
 
   const allowedExistingIds = new Set(servicesForAdmin(session).map((service) => service.id));
-  const normalizedIncoming = normalizeServices(incomingServices)
+  if (!Array.isArray(incomingServices) || incomingServices.some(s => !s || typeof s !== "object" || !s.id)) return null;
+  if (new Set(incomingServices.map(s => slug(s.id, ""))).size !== incomingServices.length) return null;
+  if (incomingServices.some(s => ["kioskIds", "projectIds", "excludedKioskIds", "templates"].some(key => key in s && !Array.isArray(s[key])))) return null;
+  if (incomingServices.some(s => db.services.some(old => old.id === s.id) && !allowedExistingIds.has(s.id))) return null;
+  if (incomingServices.some(s => (s.kioskIds || []).some(id => !allowedKioskIds.has(normalizeKioskCode(id))) || (s.projectIds || []).some(id => !allowedProjectIds.has(id)))) return null;
+  // A limited admin must never change a shared record used outside their kiosks.
+  // Shared edits go through Super Admin's kiosk-specific copy operation.
+  if (incomingServices.some(s => {
+    const existing = db.services.find(old => old.id === s.id);
+    if (existing && db.kiosks.some(k => !allowedKioskIds.has(k.kioskId) && serviceAppliesToKiosk(existing, k))) return true;
+    const candidate = {...existing, ...s};
+    return db.kiosks.some(k => !allowedKioskIds.has(k.kioskId) && serviceAppliesToKiosk(candidate, k));
+  })) return null;
+  const mergedIncoming = incomingServices.map(s => ({...db.services.find(old => old.id === s.id), ...s}));
+  const normalizedIncoming = normalizeServices(mergedIncoming)
     .map((service) => {
       const existing = db.services.find((item) => item.id === service.id) || {};
       const requestedProjects = Array.isArray(service.projectIds) ? service.projectIds.map((id) => String(id || "").trim()).filter(Boolean) : [];
@@ -2358,7 +2359,7 @@ function mergeAdminServices(session = {}, incomingServices = [], incomingPricing
 
   const incomingIds = new Set(normalizedIncoming.map((service) => service.id));
   db.services = [
-    ...db.services.filter((service) => !allowedExistingIds.has(service.id)),
+    ...db.services.filter((service) => !incomingIds.has(service.id)),
     ...normalizedIncoming
   ];
 
@@ -4465,7 +4466,7 @@ async function saveSuperAdminCollection(collection) {
       syncServicePricing();
     }
     touchConfig(`${collection}-updated`);
-    if (collection === "services" || collection === "pricing") {
+    if (collection === "pricing") {
       await saveSettings();
     }
   } else if (collection === "admins") {
@@ -4474,7 +4475,7 @@ async function saveSuperAdminCollection(collection) {
     await saveSettings();
   }
 
-  return saveData();
+  return saveData({ services: collection === "services" });
 }
 
 function superAdminSummary() {
@@ -4595,6 +4596,7 @@ function validateSuperAdminRecord(collection, record, existing = null) {
   }
 
   if (collection === "kioskAdmins") {
+    if ((record.kioskIds || []).some(id => !db.kiosks.some(k => k.kioskId === id && record.projectIds.includes(k.projectId)))) return "Selected kiosks must belong to an assigned project.";
     const invalidProject = (record.projectIds || []).find((projectId) => !db.projects.some((project) => project.projectId === projectId));
     if (invalidProject) return `Project ${invalidProject} does not exist.`;
   }
@@ -4603,6 +4605,7 @@ function validateSuperAdminRecord(collection, record, existing = null) {
     if (!(record.projectIds || []).length) {
       return "Select at least one existing project before assigning this service.";
     }
+    if ((record.kioskIds || []).some(id => !db.kiosks.some(k => k.kioskId === id && record.projectIds.includes(k.projectId)))) return "Selected kiosks must belong to an assigned project.";
     const invalidProject = (record.projectIds || []).find((projectId) => !db.projects.some((project) => project.projectId === projectId));
     if (invalidProject) return `Project ${invalidProject} does not exist.`;
   }
@@ -4610,7 +4613,64 @@ function validateSuperAdminRecord(collection, record, existing = null) {
   return "";
 }
 
-function handleSuperAdminTemplate(req, res, parts, body) {
+let serviceWriteQueue = Promise.resolve();
+
+function withServiceWrite(req, res, body, action) {
+  if (req.method === "GET") return action();
+  const task = serviceWriteQueue.then(async () => {
+    const supplied = req.headers["x-kiosk-config-version"] ?? body?.expectedConfigVersion;
+    const createsService = req.method === "POST" && /^\/api\/super-admin\/services\/?(?:\?.*)?$/.test(req.url);
+    if (supplied == null && !createsService) return json(res, 428, { error: "Reload service settings before saving. This page is out of date.", code: "SERVICE_VERSION_REQUIRED" });
+    if (supplied != null && (!Number.isSafeInteger(Number(supplied)) || Number(supplied) !== Number(db.config.version))) return json(res, 409, { error: "Service settings changed in another window. Reload and reapply your edit.", code: "SERVICE_VERSION_CONFLICT", config: db.config });
+    const before = JSON.parse(JSON.stringify({services: db.services, pricing: db.pricing, config: db.config}));
+    try {
+      const directory = path.join(path.dirname(DATA_PATH), ".service-history");
+      fs.mkdirSync(directory, {recursive: true, mode: 0o700});
+      const file = path.join(directory, `${Date.now()}-${crypto.randomBytes(6).toString("hex")}.json`);
+      fs.writeFileSync(file, JSON.stringify({savedAt: isoNow(), method: req.method, path: req.url.split("?")[0], ...before}), {flag: "wx", mode: 0o600});
+    } catch {
+      return json(res, 503, {error: "Could not back up service settings. Nothing was changed."});
+    }
+    try {
+      await action();
+      if (res.statusCode >= 400) Object.assign(db, before);
+    } catch (error) {
+      Object.assign(db, before);
+      throw error;
+    }
+  });
+  serviceWriteQueue = task.catch(() => {});
+  return task;
+}
+
+async function handleKioskServiceWrite(req, res, kioskId, serviceId, body) {
+  if (!["PUT", "DELETE"].includes(req.method)) return json(res, 405, {error: "Unsupported kiosk service operation."});
+  const kiosk = db.kiosks.find(k => normalizeKioskCode(k.kioskId) === normalizeKioskCode(kioskId));
+  const service = db.services.find(s => s.id === serviceId);
+  if (!kiosk || !service || !serviceAppliesToKiosk(service, kiosk)) return json(res, 404, {error: "Service is not assigned to this kiosk."});
+  let record = service;
+  if (req.method === "DELETE") {
+    service.excludedKioskIds = [...new Set([...(service.excludedKioskIds || []), kiosk.kioskId])];
+  } else {
+    const onlyThisKiosk = service.kioskIds.length === 1 && normalizeKioskCode(service.kioskIds[0]) === kiosk.kioskId;
+    const id = onlyThisKiosk ? service.id : `${slug(service.id + "-" + kiosk.kioskId)}-${crypto.randomBytes(4).toString("hex")}`;
+    record = normalizeSuperAdminService({...service, ...body, id, projectIds: [kiosk.projectId], kioskIds: [kiosk.kioskId], excludedKioskIds: []});
+    const error = validateSuperAdminRecord("services", record);
+    if (error) return json(res, 400, {error});
+    if (onlyThisKiosk) db.services = db.services.map(s => s.id === service.id ? record : s);
+    else {
+      service.excludedKioskIds = [...new Set([...(service.excludedKioskIds || []), kiosk.kioskId])];
+      db.services.push(record);
+      const kioskRates = db.pricing.__kiosks?.[kiosk.kioskId];
+      if (kioskRates?.[service.id]) kioskRates[id] = {...kioskRates[service.id]};
+    }
+  }
+  const saved = await saveSuperAdminCollection("services");
+  if (!saved?.ok) return json(res, 502, {error: "Service settings could not be saved. Please retry."});
+  return json(res, 200, {record, services: servicesForKiosk(kiosk.kioskId), config: db.config});
+}
+
+async function handleSuperAdminTemplate(req, res, parts, body) {
   const serviceId = decodeSegment(parts[3]);
   const templateId = decodeSegment(parts[5] || "");
   const service = db.services.find((item) => item.id === serviceId);
@@ -4633,8 +4693,8 @@ function handleSuperAdminTemplate(req, res, parts, body) {
     }
     service.mode = "template";
     service.templates.push(template);
-    saveSuperAdminCollection("services");
-    return json(res, 201, { template, service });
+    if (!(await saveSuperAdminCollection("services"))?.ok) return json(res, 502, {error: "Could not save template changes. Please retry."});
+    return json(res, 201, { template, service, config: db.config });
   }
 
   const index = service.templates.findIndex((item) => item.id === templateId);
@@ -4650,14 +4710,14 @@ function handleSuperAdminTemplate(req, res, parts, body) {
   if (req.method === "PUT" || req.method === "PATCH") {
     const updated = normalizeTemplates([{ ...service.templates[index], ...(body.template || body), id: service.templates[index].id }])[0];
     service.templates[index] = updated;
-    saveSuperAdminCollection("services");
-    return json(res, 200, { template: updated, service });
+    if (!(await saveSuperAdminCollection("services"))?.ok) return json(res, 502, {error: "Could not save template changes. Please retry."});
+    return json(res, 200, { template: updated, service, config: db.config });
   }
 
   if (req.method === "DELETE") {
     const [template] = service.templates.splice(index, 1);
-    saveSuperAdminCollection("services");
-    return json(res, 200, { deleted: template, service });
+    if (!(await saveSuperAdminCollection("services"))?.ok) return json(res, 502, {error: "Could not save template changes. Please retry."});
+    return json(res, 200, { deleted: template, service, config: db.config });
   }
 
   return json(res, 405, { error: "Unsupported template operation." });
@@ -5883,10 +5943,14 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 405, { error: "Unsupported pricing operation." });
     }
 
+    if (resource === "kiosk-services") {
+      return withServiceWrite(req, res, body, () => handleKioskServiceWrite(req, res, decodeSegment(pathParts[3] || ""), decodeSegment(pathParts[4] || ""), body));
+    }
     if (resource === "services" && pathParts[4] === "templates") {
-      return handleSuperAdminTemplate(req, res, pathParts, body);
+      return withServiceWrite(req, res, body, () => handleSuperAdminTemplate(req, res, pathParts, body));
     }
 
+    if (resource === "services") return withServiceWrite(req, res, body, () => handleSuperAdminCollection(req, res, resource, decodeSegment(pathParts[3] || ""), body));
     return handleSuperAdminCollection(req, res, resource, decodeSegment(pathParts[3] || ""), body);
   }
 
@@ -6225,15 +6289,16 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/services") {
-    const savedServices = mergeAdminServices(adminSession, body.services || body, body.pricing);
-    if (!savedServices) {
-      return json(res, 403, { error: "This admin has no assigned kiosks." });
-    }
-    touchConfig("services-updated");
-    saveSettings();
-    saveData();
-    const scopedServices = servicesForAdmin(adminSession);
-    return json(res, 200, { services: scopedServices, pricing: pricingForServices(scopedServices, [...kioskIdsForAdmin(adminSession)]), config: db.config });
+    return withServiceWrite(req, res, body, async () => {
+      const savedServices = mergeAdminServices(adminSession, body.services || body, body.pricing);
+      if (!savedServices) {
+        return json(res, 403, { error: "Invalid service scope. Use Super Admin Kiosk-wise Services to edit shared services for one kiosk." });
+      }
+      touchConfig("services-updated");
+      if (!(await saveData({ services: true }))?.ok) return json(res, 502, {error: "Could not save service settings. Please retry."});
+      const scopedServices = servicesForAdmin(adminSession);
+      return json(res, 200, { services: scopedServices, pricing: pricingForServices(scopedServices, [...kioskIdsForAdmin(adminSession)]), config: db.config });
+    });
   }
 
   if (req.method === "POST" && url.pathname.startsWith("/api/admin/reprint/")) {

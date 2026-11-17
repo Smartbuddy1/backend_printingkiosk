@@ -55,6 +55,13 @@ function makeConfig(env = {}, { hosted = false } = {}) {
   const serviceName = env.DIGILOCKER_SERVICE_NAME || "Printing Kiosk";
   for (const value of [purpose, serviceName]) if (!/^[A-Za-z0-9_ ]{1,160}$/.test(value)) throw new Error("Purpose and service name require letters, numbers, spaces or underscores");
   if (enabled && mode === "live" && (!clientId || !clientSecret || !env.DIGILOCKER_REDIRECT_URI)) throw new Error("Live mode requires client credentials and the registered redirect URI");
+  if (enabled && mode === "live") {
+    for (const [name, value] of [["DIGILOCKER_CLIENT_ID", clientId], ["DIGILOCKER_CLIENT_SECRET", clientSecret]]) {
+      if (value !== value.trim() || !value.trim() || /[\u0000-\u001f\u007f]/.test(value) || /^(?:PASTE_|REPLACE_|YOUR_|<)/i.test(value)) throw new Error(`${name} is missing or still a placeholder`);
+    }
+  }
+  const reqDoctypes = env.DIGILOCKER_REQ_DOCTYPES || "";
+  if (reqDoctypes && !/^[A-Z0-9]{5}(,[A-Z0-9]{5})*$/.test(reqDoctypes)) throw new Error("DIGILOCKER_REQ_DOCTYPES must contain comma-separated five-character document types");
   if (mode === "live" && publicBase.protocol !== "https:") throw new Error("Live DigiLocker requires an HTTPS public callback origin");
   const redirectUri = env.DIGILOCKER_REDIRECT_URI || `${publicBase.origin}/digilocker/callback`;
   const redirect = new URL(redirectUri);
@@ -83,7 +90,7 @@ function makeConfig(env = {}, { hosted = false } = {}) {
     backend: localService("DIGILOCKER_KIOSK_BACKEND_URL", "http://127.0.0.1:5080"),
     agent: localService("DIGILOCKER_KIOSK_AGENT_URL", "http://127.0.0.1:5079"),
     kioskId: env.DIGILOCKER_KIOSK_ID || "LOCAL-KIOSK",
-    reqDoctypes: env.DIGILOCKER_REQ_DOCTYPES || "",
+    reqDoctypes,
     pairTtl: number(env, "DIGILOCKER_PAIR_TTL_MINUTES", 3, 0.01, 10) * 60000,
     sessionTtl: number(env, "DIGILOCKER_SESSION_TTL_MINUTES", 10, 0.02, 30) * 60000,
     phoneIdleMs: number(env, "DIGILOCKER_PHONE_IDLE_SECONDS", 120, 1, 600) * 1000,

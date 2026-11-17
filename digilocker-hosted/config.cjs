@@ -18,6 +18,7 @@ function hostedConfig(env = {}) {
   const enabled = env.DIGILOCKER_ENABLED === "true";
   if(enabled && allowedOrigins.length < 2)throw new Error("Set DIGILOCKER_ALLOWED_ORIGINS for the separate frontend");
   if(enabled && (!env.DIGILOCKER_CLIENT_ID || !env.DIGILOCKER_CLIENT_SECRET || !env.DIGILOCKER_REDIRECT_URI))throw new Error("Activation requires approved credentials and the registered redirect URI");
+  if(enabled && !env.DIGILOCKER_KIOSK_BACKEND_URL)throw new Error("Activation requires DIGILOCKER_KIOSK_BACKEND_URL for the per-kiosk service check");
   const assets = __dirname;
   const config = makeConfig({...env,
     DIGILOCKER_ENABLED:String(enabled),DIGILOCKER_MODE:"live",DIGILOCKER_LOCAL_PREVIEW:"false",DIGILOCKER_LAN_DEMO:"false",
@@ -26,6 +27,6 @@ function hostedConfig(env = {}) {
   },{hosted:true});
   if(new URL(config.endpoints.authorize).hostname !== "digilocker.meripehchaan.gov.in")throw new Error("Hosted provider must be the selected government Meri Pehchaan service");
   if(enabled && !fs.existsSync(path.join(assets,"assets/vendor/pdfjs/pdf.worker.min.mjs")))throw new Error("Hosted PDF parser asset is missing");
-  return {...config,hosted:true,allowedOrigins:[...new Set(allowedOrigins)]};
+  return {...config,hosted:true,pdfUnlock:env.DIGILOCKER_PDF_UNLOCK==="true",allowedOrigins:[...new Set(allowedOrigins)]};
 }
 module.exports={hostedConfig};

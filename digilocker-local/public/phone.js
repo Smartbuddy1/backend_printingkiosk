@@ -1,7 +1,7 @@
 "use strict";
-const form = document.querySelector("form[data-max]");
+const form = document.querySelector("form[data-max],form[data-unlock]");
 let submitting = false;
-if (form) {
+if (form?.hasAttribute("data-max")) {
   const boxes = [...form.querySelectorAll('input[type="checkbox"]')];
   const button = form.querySelector('button[type="submit"]');
   const count = form.querySelector("#selection-count");
@@ -20,6 +20,12 @@ if (form) {
   });
   update();
 }
+if(form?.hasAttribute("data-unlock")){
+  const field=form.querySelector('[name="password"]');
+  form.addEventListener("submit",()=>{submitting=true;form.querySelector('button[type="submit"]').disabled=true;form.setAttribute("aria-busy","true");});
+  window.addEventListener("pagehide",()=>{field.value="";});
+  window.addEventListener("pageshow",event=>{if(event.persisted){field.value="";location.reload();}});
+}
 
 // Use absolute deadlines so background tabs expire when brought back. Polling
 // checks validity but never extends inactivity; only actual interaction does.
@@ -28,7 +34,7 @@ if (form || document.body.dataset.phonePageExpiry) {
   const idleMs = Number(form?.dataset.idleMs || 180000);
   let idleExpiry = Number(form?.dataset.idleExpires || Math.min(Date.now() + idleMs, hardExpiry));
   let ended = false, lastSent = 0, pendingActivity = false, inFlight = false;
-  const base = form?.getAttribute("action").replace(/\/select$/, "");
+  const base = form?.getAttribute("action").replace(/\/(select|unlock)$/, "");
   const csrf = form?.querySelector('[name="csrf"]')?.value;
   const notice = document.createElement("p");
   notice.className = "phone-session-clock";
@@ -47,7 +53,8 @@ if (form || document.body.dataset.phonePageExpiry) {
     if (ended) return;
     if (Date.now() >= hardExpiry || (!submitting && Date.now() >= idleExpiry)) { expire(); return; }
     const seconds = Math.max(0,Math.ceil((Math.min(hardExpiry,idleExpiry)-Date.now())/1000));
-    notice.textContent = submitting ? "Sending documents…" : `Session ends in ${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")} without activity`;
+    const remaining=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
+    notice.textContent = submitting ? "Sending documents…" : form ? `Session ends in ${remaining} without activity` : `This page clears in ${remaining}`;
   }
   async function sync(activity) {
     if (ended || submitting || inFlight || !base) return;

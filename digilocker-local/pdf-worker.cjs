@@ -4,6 +4,11 @@
 const { parentPort, workerData, MessageChannel } = require("node:worker_threads");
 const { pathToFileURL } = require("node:url");
 const fs = require("node:fs");
+// PDF.js AES-256 validation uses this ES addition, absent in the deployed Node
+// 24 runtime. Install the standards-compliant fallback only in this worker.
+if (!Math.sumPrecise) Object.defineProperty(Math, "sumPrecise", {
+  value: require("core-js-pure/actual/math/sum-precise"), configurable: true, writable: true
+});
 if (!Uint8Array.prototype.toHex) Object.defineProperty(Uint8Array.prototype, "toHex", {
   value() { return Buffer.from(this.buffer, this.byteOffset, this.byteLength).toString("hex"); }
 });
@@ -17,7 +22,8 @@ if (!Uint8Array.prototype.toHex) Object.defineProperty(Uint8Array.prototype, "to
   port2.on("message", message => {
     if (message.callbackId === 1 && message.callback === 1) port2.postMessage({ sourceName: "dl", targetName: message.data, action: "Ready", data: null });
     if (message.action === "GetDoc") parentPort.postMessage({ pages: message.data.pdfInfo.numPages });
-    if (["DocException", "PasswordRequest", "UnsupportedFeature"].includes(message.action) || message.callback === 2) parentPort.postMessage({ error: "PDF_INVALID" });
+    if (message.action === "PasswordRequest" || (message.action === "DocException" && message.data?.name === "PasswordException")) parentPort.postMessage({ error: "PDF_PASSWORD_REQUIRED" });
+    else if (["DocException", "UnsupportedFeature"].includes(message.action) || message.callback === 2) parentPort.postMessage({ error: "PDF_INVALID" });
   });
   port2.postMessage({ sourceName: "main", targetName: "worker", action: "GetDocRequest", callbackId: 1,
     data: { docId: "dl", apiVersion: version, data: workerData.data, disableAutoFetch: true,

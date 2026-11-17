@@ -86,6 +86,7 @@ class Sessions {
     if (session.state) this.states.delete(session.state);
     session.pairCode = null; session.state = null; session.verifier = null; session.phoneHash = null; session.csrf = null;
     session.phoneIdleExpiresAt = null;
+    session.awaitingPassword = false;
     this.reserved -= session.reserved; session.reserved = 0;
   }
   async end(session, status, { remove = false, code = null } = {}) {
@@ -96,7 +97,7 @@ class Sessions {
     try { await this.revokeToken(session); } catch { session.error = "REVOKE_FAILED"; }
   }
   async sweep() {
-    await Promise.all([...this.items.values()].filter(s => s.expiresAt <= this.now() || (s.status === "PHONE_CONNECTED" && s.phoneIdleExpiresAt && s.phoneIdleExpiresAt <= this.now())).map(s => this.end(s, "EXPIRED", { remove: true })));
+    await Promise.all([...this.items.values()].filter(s => s.expiresAt <= this.now() || ((s.status === "PHONE_CONNECTED" || s.awaitingPassword) && s.phoneIdleExpiresAt && s.phoneIdleExpiresAt <= this.now())).map(s => this.end(s, "EXPIRED", { remove: true })));
   }
   async close() { await Promise.all([...this.items.values()].map(s => this.end(s, "CANCELLED", { remove: true }))); }
 }

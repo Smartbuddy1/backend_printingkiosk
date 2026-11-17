@@ -14,4 +14,8 @@ function result(language, config, success = true, code = "generic") {
   const t = translator(language);
   return shell(language, t(success ? "sent" : "failed"), `<div class="result ${success ? "ok" : "error"}" role="status">${success ? "✓" : "!"}</div><p>${h(t(success ? "sentNote" : code))}</p>${config.mode === "live" ? `<p><a href="${h(config.endpoints.logout)}" rel="noreferrer">${h(t("logout"))}</a></p>` : ""}`, config.mode === "mock", true).replace("<body>", `<body data-phone-page-expiry="${Date.now()+(success?15000:30000)}">`);
 }
-module.exports = { shell, documents, result };
+function password(session,config,error=null){
+  const t=translator(session.language),file=session.pending.find(f=>f.encrypted);
+  return shell(session.language,t("passwordTitle"),`<p>${h(t("passwordIntro"))}</p><p><strong>${h(file.name)}</strong></p>${error?`<p role="alert" class="password-error">${h(t(error))}</p>`:""}<form method="post" action="/api/digilocker/sessions/${session.id}/unlock" data-unlock data-idle-ms="${config.phoneIdleMs}" data-idle-expires="${session.phoneIdleExpiresAt}" data-expires="${session.expiresAt}" data-ended="${h(t("ended"))}" autocomplete="off"><input type="hidden" name="csrf" value="${h(session.csrf)}"><input type="hidden" name="fileId" value="${h(file.fileId)}"><label for="pdf-password">${h(t("passwordLabel"))}</label><input id="pdf-password" name="password" type="password" required maxlength="256" autocomplete="off" autocapitalize="off" spellcheck="false"><p>${h(t("passwordPrivacy"))}</p><button type="submit" class="send">${h(t("passwordContinue"))}</button></form>`,config.mode==="mock",true);
+}
+module.exports = { shell, documents, result, password };

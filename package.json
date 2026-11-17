@@ -6,19 +6,22 @@
   "scripts": {
     "start": "node server.js",
     "demo:digilocker": "node tools/digilocker-demo.cjs",
-    "test:digilocker": "node --test digilocker-local/test/core.test.cjs digilocker-local/test/integration.test.cjs digilocker-local/test/cleanup.test.cjs digilocker-local/test/lan.test.cjs",
+    "test:digilocker": "node --test digilocker-hosted/test/hosted.test.cjs digilocker-hosted/test/password-native.test.cjs",
     "start:digilocker": "node digilocker-hosted/start.cjs",
     "test:digilocker-hosted": "node --test digilocker-hosted/test/hosted.test.cjs",
     "kiosk:update": "node managed-update/cli.cjs",
     "kiosk:build": "node managed-update/release.cjs",
     "setup:kiosk-updates": "node managed-update/configure-server.cjs",
-    "test:kiosk-updates": "node --test managed-update/test/*.test.cjs managed-update/test/deployment.cjs"
+    "test:kiosk-updates": "node --test managed-update/test/*.test.cjs managed-update/test/deployment.cjs",
+    "test:pdf-password": "node --test digilocker-hosted/test/password-native.test.cjs",
+    "test:digilocker:full-source": "node --test digilocker-local/test/core.test.cjs digilocker-local/test/provider-contract.test.cjs digilocker-local/test/integration.test.cjs digilocker-local/test/cleanup.test.cjs digilocker-local/test/lan.test.cjs digilocker-local/test/printer-overlay.test.cjs"
   },
   "license": "MIT",
   "dependencies": {
     "pg": "^8.21.0",
     "qrcode": "^1.5.4",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "core-js-pure": "3.51.0"
   },
   "engines": {
     "node": ">=20"

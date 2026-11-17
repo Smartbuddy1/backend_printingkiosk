@@ -2,6 +2,52 @@
 const test=require("node:test"),assert=require("node:assert/strict");const {makeConfig}=require("../config.cjs"),{startStack}=require("../start.cjs");const flow=require("./flow.cjs");
 async function setup(t,options={}){const config=makeConfig({DIGILOCKER_ENABLED:"true",DIGILOCKER_PORT:"0",DIGILOCKER_MOCK_PORT:"0"});const stack=await startStack(config,options);t.after(()=>stack.close());return stack;}
 
+test("callback diagnostics report permission flags and counts without private OAuth or document values",async t=>{
+  const logs=[];const stack=await setup(t,{log:entry=>logs.push(entry)});
+  const session=await flow.create(stack),phone=await flow.connect(stack,session);
+  assert.ok(logs.some(e=>e.state==="CALLBACK_RECEIVED"));
+  assert.ok(logs.some(e=>e.state==="TOKEN_RECEIVED"&&e.issuedGranted&&e.uploadedGranted));
+  assert.ok(logs.some(e=>e.state==="DOCUMENT_LIST_READY"&&e.printableCount===3));
+  const encoded=JSON.stringify(logs),item=stack.app.store.items.get(session.sessionId);
+  for(const secret of [session.kioskSecret,phone.cookie,item.token,stack.config.clientSecret,new URL(phone.callback).searchParams.get("code"),...phone.uris]){
+    assert.ok(!encoded.includes(secret),"Private value must not enter diagnostics");
+  }
+  for(const record of logs)assert.ok(Object.keys(record).every(k=>["session","state","issuedGranted","uploadedGranted","issuedCount","uploadedCount","printableCount"].includes(k)));
+});
+
+test("provider callback errors never log arbitrary error descriptions or values",async t=>{
+  const logs=[];const stack=await setup(t,{log:entry=>logs.push(entry)}),session=await flow.create(stack);
+  const start=await fetch(session.qrUrl,{redirect:"manual"}),cookie=start.headers.get("set-cookie").split(";")[0];
+  const state=new URL(start.headers.get("location")).searchParams.get("state");
+  const response=await fetch(stack.config.localOrigin+"/digilocker/callback?"+new URLSearchParams({state,error:"private-provider-value",error_description:"private-description"}),{headers:{Cookie:cookie}});
+  assert.equal(response.status,200);
+  assert.ok(logs.some(e=>e.state==="AUTHORIZATION_REJECTED"&&e.reason==="provider_rejected"));
+  assert.ok(!JSON.stringify(logs).includes("private-"));
+});
+
+test("Back and reopen: old QR, phone and files lose access; fresh session gets independent secrets",async t=>{
+  const stack=await setup(t);
+  for(const phase of ['CREATED','PHONE_CONNECTED','READY']){
+    const old=await flow.create(stack),base=`${stack.config.localOrigin}/api/digilocker/sessions/${old.sessionId}`;
+    const phone=phase==='CREATED'?null:await flow.connect(stack,old);
+    if(phase==='READY')assert.equal((await flow.select(stack,old,phone)).status,200);
+    const files=stack.app.store.items.get(old.sessionId).files.map(file=>({...file}));
+    assert.equal((await flow.complete(stack,old,'cancelled')).status,200);
+    assert.equal((await fetch(old.qrUrl,{redirect:'manual'})).status,410);
+    assert.equal((await fetch(base+'/status',{headers:flow.kioskHeaders(old)})).status,410);
+    if(phone)assert.equal((await flow.select(stack,old,phone)).status,410);
+    for(const file of files){
+      assert.ok(file.bytes.every(b=>b===0));
+      assert.equal((await fetch(base+'/files/'+file.fileId,{headers:flow.kioskHeaders(old)})).status,410);
+    }
+    const fresh=await flow.create(stack);
+    assert.notEqual(fresh.sessionId,old.sessionId);assert.notEqual(fresh.kioskSecret,old.kioskSecret);
+    assert.notEqual(fresh.qrUrl,old.qrUrl);assert.notEqual(fresh.qrSvg,old.qrSvg);
+    if(phone)assert.equal((await flow.select(stack,fresh,phone)).status,410);
+    await flow.complete(stack,fresh,'cancelled');
+  }
+});
+
 test("phone inactivity: polling cannot renew access; authenticated activity extends it; expiry revokes the token",async t=>{
   let now=Date.now();const stack=await setup(t,{now:()=>now});
   const session=await flow.create(stack),phone=await flow.connect(stack,session);

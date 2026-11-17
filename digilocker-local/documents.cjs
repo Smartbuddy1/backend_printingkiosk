@@ -21,7 +21,7 @@ function countPdf(bytes, frontend, signal) {
     const abort = () => done(new Failure("SESSION_ENDED", 410));
     const timer = setTimeout(() => done(new Failure("PDF_INVALID", 415)), 8000);
     signal?.addEventListener("abort", abort, { once: true });
-    worker.on("message", value => Number.isSafeInteger(value.pages) && value.pages > 0 ? done(null, value.pages) : done(new Failure("PDF_INVALID", 415)));
+    worker.on("message", value => Number.isSafeInteger(value.pages) && value.pages > 0 ? done(null, value.pages) : done(new Failure(value.error === "PDF_PASSWORD_REQUIRED" ? value.error : "PDF_INVALID", 415)));
     worker.on("error", () => done(new Failure("PDF_INVALID", 415)));
     worker.on("exit", () => { if (!settled) done(new Failure("PDF_INVALID", 415)); });
   });

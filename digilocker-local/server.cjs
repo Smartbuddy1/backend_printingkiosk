@@ -5,6 +5,7 @@ const path = require("node:path");
 const QRCode = require("qrcode");
 const { Sessions } = require("./sessions.cjs");
 const { Provider } = require("./provider.cjs");
+const { unlockPdf } = require("./unlock-pdf.cjs");
 const { Failure, random, hash, equalHash, readBody, cookies, RateLimiter } = require("./security.cjs");
 const { dictionaries } = require("./i18n.cjs");
 const phone = require("./phone-pages.cjs");
@@ -14,6 +15,7 @@ const TYPES = { ".js":"text/javascript", ".mjs":"text/javascript", ".css":"text/
 const PHONE_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 function createService(config, options = {}) {
   const provider = options.provider || new Provider(config);
+  const decrypt = options.unlockPdf || unlockPdf;
   const store = new Sessions(config, { now: options.now, revoke: token => provider.revoke(token), log: options.log });
   const limiter = new RateLimiter(options.now), kioskKey = random(), kioskKeyHash = hash(kioskKey);
   const source = config.hosted ? "" : fs.readFileSync(path.join(config.frontend,"app.js"),"utf8");
@@ -63,20 +65,33 @@ function createService(config, options = {}) {
     if (!Array.isArray(body.uris) || !body.uris.length || body.uris.length > config.maxFiles || new Set(body.uris).size !== body.uris.length || body.uris.some(uri => typeof uri !== "string" || !session.documents.has(uri))) throw new Failure("SELECTION_INVALID",400);
     store.transition(session,"DOWNLOADING");
     try {
-      store.reserve(session,body.uris.length * config.maxBytes);
+      store.reserve(session,body.uris.length * config.maxBytes * (config.pdfUnlock ? 2 : 1));
       for (const uri of body.uris) {
         store.alive(session);
-        const file=await provider.download(session.documents.get(uri),session.token,session.abort.signal);
+        const file=await provider.download(session.documents.get(uri),session.token,session.abort.signal,{allowEncrypted:config.pdfUnlock===true});
         try { store.alive(session); } catch(error) { file.bytes.fill(0); throw error; }
         session.pending.push({...file,fileId:random(16)});
       }
       await store.revokeToken(session); store.alive(session);
-      session.files=session.pending; session.pending=[]; session.documents.clear(); session.verifier=null;
-      const size=session.files.reduce((sum,f)=>sum+f.size,0); store.reserved-=session.reserved-size; session.reserved=size;
-      store.transition(session,"READY");
+      session.documents.clear();session.verifier=null;
+      if(session.pending.some(file=>file.encrypted)){
+        session.awaitingPassword=true;store.touchPhone(session);return;
+      }
+      ready(session);
     } catch(error) {
       await store.end(session,"FAILED",{code:error instanceof Failure ? error.code : "PROVIDER_UNAVAILABLE"}); throw error;
     }
+  }
+  function ready(session){
+    store.alive(session);
+    session.awaitingPassword=false;session.files=session.pending;session.pending=[];
+    const size=session.files.reduce((sum,f)=>sum+f.size,0);store.reserved-=session.reserved-size;session.reserved=size;
+    store.transition(session,"READY");
+  }
+  function passwordSession(session){
+    store.alive(session);
+    if(session.status!=="DOWNLOADING" || !session.awaitingPassword || session.unlockBusy)throw new Failure("STATE_INVALID",409);
+    if(session.phoneIdleExpiresAt<=store.now())throw new Failure("SESSION_ENDED",410);
   }
   async function proxyBackend(req,res,url) {
     // Only explicitly configured loopback services; no inherited URLs or credentials.
@@ -178,18 +193,28 @@ function createService(config, options = {}) {
         if(req.method==="GET" && url.pathname==="/digilocker/callback"){
           limiter.take("callback:"+peer(req),30);
           session=store.consumeState(url.searchParams.get("state"),cookies(req).dl_phone);
+          const audit=(state,fields={})=>options.log?.({session:session.id.slice(0,8),state,...fields});
+          audit("CALLBACK_RECEIVED");
           if(url.searchParams.has("error")){
-            const denied=url.searchParams.get("error")==="access_denied";await store.end(session,denied?"DENIED":"FAILED");res.setHeader("Set-Cookie",cookie("",0));
+            const value=url.searchParams.get("error");
+            const reason=["access_denied","invalid_request","unauthorized_client","invalid_scope","server_error","temporarily_unavailable","unsupported_response_type"].includes(value)?value:"provider_rejected";
+            audit("AUTHORIZATION_REJECTED",{reason});
+            const denied=value==="access_denied";await store.end(session,denied?"DENIED":"FAILED");res.setHeader("Set-Cookie",cookie("",0));
             return html(res,200,phone.result(session.language,config,false,denied?"denied":"generic"));
           }
+          let stage="token";
           try{
             const code=url.searchParams.get("code");if(!code || code.length>4096)throw new Failure("STATE_INVALID");
             // Finish an in-flight token response even on kiosk cancellation so it can be revoked.
             const grant=await provider.token(code,session.verifier);session.token=grant.accessToken;session.verifier=null;store.alive(session);
-            session.documents=await provider.list(session.token,grant.scope,session.abort.signal);store.alive(session);
+            const scopes=new Set(String(grant.scope||"").split(/\s+/));
+            audit("TOKEN_RECEIVED",{issuedGranted:scopes.has("files.issueddocs"),uploadedGranted:scopes.has("files.uploadeddocs")});
+            stage="documents";
+            session.documents=await provider.list(session.token,grant.scope,session.abort.signal,counts=>audit("DOCUMENT_COUNTS",counts));store.alive(session);
+            audit("DOCUMENT_LIST_READY",{printableCount:session.documents.size});
             if(!session.documents.size){await store.end(session,"FAILED",{code:"noDocuments"});return html(res,400,phone.result(session.language,config,false,"noDocuments"));}
             return redirect(res,"/digilocker/documents");
-          }catch(error){await store.end(session,"FAILED",{code:error.code||"PROVIDER_UNAVAILABLE"});throw error;}
+          }catch(error){audit("CALLBACK_FAILED",{stage,reason:error instanceof Failure?error.code:"PROVIDER_UNAVAILABLE"});await store.end(session,"FAILED",{code:error.code||"PROVIDER_UNAVAILABLE"});throw error;}
         }
         if(req.method==="GET" && url.pathname==="/digilocker/documents"){
           session=phoneSession(req);if(session.status!=="PHONE_CONNECTED" || !session.token)throw new Failure("SESSION_ENDED",410);
@@ -199,12 +224,17 @@ function createService(config, options = {}) {
           store.touchPhone(session);
           return html(res,200,phone.documents(session,config));
         }
+        if(req.method==="GET" && url.pathname==="/digilocker/unlock"){
+          session=phoneSession(req);passwordSession(session);
+          res.setHeader("Referrer-Policy","strict-origin");
+          return html(res,200,phone.password(session,config));
+        }
         if(req.method==="GET" && url.pathname==="/digilocker/result")return html(res,200,phone.result(url.searchParams.get("lang")||"en",config));
-        const route=/^\/api\/digilocker\/sessions\/([A-Za-z0-9_-]+)\/(status|select|phone-status|phone-activity|phone-expire|printing|complete|files\/([A-Za-z0-9_-]+))$/.exec(url.pathname);
+        const route=/^\/api\/digilocker\/sessions\/([A-Za-z0-9_-]+)\/(status|select|unlock|phone-status|phone-activity|phone-expire|printing|complete|files\/([A-Za-z0-9_-]+))$/.exec(url.pathname);
         if(route){
           const id=route[1],action=route[2];
           if(action.startsWith("phone-")){
-            session=phoneSession(req);if(session.id!==id || session.status!=="PHONE_CONNECTED")throw new Failure("NOT_AUTHORIZED",403);
+            session=phoneSession(req);if(session.id!==id || !(session.status==="PHONE_CONNECTED" || (session.status==="DOWNLOADING" && session.awaitingPassword)))throw new Failure("NOT_AUTHORIZED",403);
             if(action==="phone-status" && req.method==="GET")return json(res,200,{expiresAt:session.expiresAt,idleExpiresAt:session.phoneIdleExpiresAt});
             if(req.method!=="POST" || req.headers.origin!==config.publicBase)throw new Failure("NOT_AUTHORIZED",403);
             const body=await readBody(req);
@@ -224,6 +254,40 @@ function createService(config, options = {}) {
             session=phoneSession(req);if(session.id!==id)throw new Failure("NOT_AUTHORIZED",403);
             limiter.take("select:"+session.id,10);
             const body=await readBody(req);await select(session,body);
+            if(session.awaitingPassword){
+              if((req.headers["content-type"]||"").startsWith("application/json"))return json(res,200,{status:"PASSWORD_REQUIRED"});
+              return redirect(res,"/digilocker/unlock");
+            }
+            res.setHeader("Set-Cookie",cookie("",0));session.phoneHash=null;session.csrf=null;
+            if((req.headers["content-type"]||"").startsWith("application/json"))return json(res,200,{status:"READY"});
+            return redirect(res,`/digilocker/result?lang=${session.language}`);
+          }
+          if(action==="unlock" && req.method==="POST"){
+            if(req.headers.origin!==config.publicBase)throw new Failure("NOT_AUTHORIZED",403);
+            session=phoneSession(req);if(session.id!==id)throw new Failure("NOT_AUTHORIZED",403);
+            passwordSession(session);
+            const body=await readBody(req);
+            if(!equalHash(body.csrf,hash(session.csrf||"")))throw new Failure("NOT_AUTHORIZED",403);
+            const file=session.pending.find(f=>f.encrypted);
+            if(!file || body.fileId!==file.fileId)throw new Failure("NOT_AUTHORIZED",403);
+            limiter.take("unlock:"+session.id,10);
+            file.unlockAttempts=(file.unlockAttempts||0)+1;
+            session.unlockBusy=true;
+            try{
+              const opened=await decrypt(file.bytes,body.password,config,session.abort.signal);
+              try{store.alive(session);}catch(error){opened.bytes.fill(0);throw error;}
+              file.bytes.fill(0);Object.assign(file,opened);delete file.encrypted;delete file.unlockAttempts;
+              if(!session.pending.some(f=>f.encrypted))ready(session);else store.touchPhone(session);
+            }catch(error){
+              if(["PDF_PASSWORD_INCORRECT","BUSY"].includes(error.code) && file.unlockAttempts<5 && !session.abort.signal.aborted){
+                store.touchPhone(session);
+                res.setHeader("Referrer-Policy","strict-origin");
+                if((req.headers["content-type"]||"").startsWith("application/json"))return json(res,400,{error:error.code,status:"PASSWORD_REQUIRED"});
+                return html(res,400,phone.password(session,config,error.code));
+              }
+              await store.end(session,"FAILED",{code:error.code||"PDF_UNLOCK_FAILED"});throw error;
+            }finally{body.password=null;session.unlockBusy=false;}
+            if(session.awaitingPassword)return redirect(res,"/digilocker/unlock");
             res.setHeader("Set-Cookie",cookie("",0));session.phoneHash=null;session.csrf=null;
             if((req.headers["content-type"]||"").startsWith("application/json"))return json(res,200,{status:"READY"});
             return redirect(res,`/digilocker/result?lang=${session.language}`);
@@ -258,7 +322,7 @@ function createService(config, options = {}) {
         if(req.method==="GET" && ["/api/kiosk/config","/api/public/services"].includes(url.pathname))return json(res,200,{services:[],pricing:{},kiosk:{kioskId:"LOCAL-KIOSK"}});
         return json(res,404,{error:"Unavailable in isolated local preview"});
       }
-      if(req.method==="GET" && (url.pathname.startsWith("/assets/") || ["/styles.css","/responsive.css","/ui-icons.js"].includes(url.pathname))){
+      if(req.method==="GET" && (url.pathname.startsWith("/assets/") || ["/styles.css","/responsive.css","/ui-icons.js","/scanner.js","/scanner.css"].includes(url.pathname))){
         const filename=path.resolve(config.frontend,"."+decodeURIComponent(url.pathname));
         if(!filename.startsWith(config.frontend+path.sep)||!TYPES[path.extname(filename)]||!fs.existsSync(filename))throw new Failure("NOT_FOUND",404);
         const real=fs.realpathSync(filename);if(!real.startsWith(frontendReal+path.sep))throw new Failure("NOT_FOUND",404);
@@ -269,7 +333,7 @@ function createService(config, options = {}) {
       if(res.headersSent)return res.destroy();
       const status=error instanceof Failure?error.status:500,code=error instanceof Failure?error.code:"INTERNAL_ERROR";
       options.log?.({session:session?.id.slice(0,8)||"request",state:code});
-      if(url?.pathname.startsWith("/digilocker/") || (url?.pathname.endsWith("/select") && !(req.headers["content-type"]||"").startsWith("application/json")))return html(res,status,phone.result(session?.language||"en",config,false,code));
+      if(url?.pathname.startsWith("/digilocker/") || (/\/(select|unlock)$/.test(url?.pathname||"") && !(req.headers["content-type"]||"").startsWith("application/json")))return html(res,status,phone.result(session?.language||"en",config,false,code));
       return json(res,status,{error:code});
     }
   });

@@ -34,15 +34,28 @@ async function run(){
     });
     async function page(width,height){const {targetId}=await cdp.send("Target.createTarget",{url:"about:blank"});const {sessionId}=await cdp.send("Target.attachToTarget",{targetId,flatten:true});await cdp.send("Runtime.enable",{},sessionId);await cdp.send("Page.enable",{},sessionId);await cdp.send("Fetch.enable",{patterns:[{urlPattern:"*"}]},sessionId);await cdp.send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile:width<600},sessionId);return sessionId;}
     async function shot(session,name){const {data}=await cdp.send("Page.captureScreenshot",{format:"png",captureBeyondViewport:false},session);await fsp.writeFile(path.join(artifacts,name),Buffer.from(data,"base64"));}
-    const kiosk=await page(wifi?412:1280,wifi?915:960);await cdp.send("Page.navigate",{url:stack.config.localOrigin},kiosk);
-    await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-launch:not([disabled])"))');
+    const compact=wifi||process.argv.includes("--compact");
+    const kiosk=await page(compact?412:1280,compact?915:960);await cdp.send("Page.navigate",{url:stack.config.localOrigin},kiosk);
+    await cdp.wait(kiosk,'Boolean(document.querySelector("button[data-digilocker=service]:not([disabled])"))');
     await shot(kiosk,"01-services.png");
-    await cdp.value(kiosk,'document.querySelector(".dl-launch").click()');
+    // Simulate a browser network loss and exercise the rendered card bodies,
+    // not only their disabled buttons. No live connections are used.
+    await cdp.send("Network.enable",{},kiosk);
+    await cdp.send("Network.emulateNetworkConditions",{offline:true,latency:0,downloadThroughput:-1,uploadThroughput:-1},kiosk);
+    await cdp.wait(kiosk,'navigator.onLine === false && state.internetOnline === false');
+    assert.equal(await cdp.value(kiosk,'document.querySelectorAll("button[data-service]:not([disabled]), button[data-digilocker=service]:not([disabled])").length'),0);
+    await cdp.value(kiosk,'document.querySelectorAll("[data-service], [data-digilocker=service]").forEach(card=>card.click())');
+    assert.equal(await cdp.value(kiosk,'state.step'),0);
+    assert.equal(stack.app.store.items.size,0);
+    await shot(kiosk,"01-offline-services.png");
+    await cdp.send("Network.emulateNetworkConditions",{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1},kiosk);
+    await cdp.wait(kiosk,'Boolean(document.querySelector("button[data-digilocker=service]:not([disabled])"))');
+    await cdp.value(kiosk,'document.querySelector("button[data-digilocker=service]").click()');
     await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-qr svg"))');
     assert.equal(await cdp.value(kiosk,'document.querySelectorAll(".dl-pair a").length'),0);
     assert.equal(await cdp.value(kiosk,'JSON.parse(sessionStorage.getItem("kioskCustomerState")).documentSource'),"digilocker");
     const oldPair=[...stack.app.store.items.values()].find(s=>s.status==="CREATED"&&s.pairCode).pairCode;
-    await cdp.value(kiosk,'document.querySelector("[data-digilocker=refresh]").click()');
+    await cdp.value(kiosk,'window.DigilockerUI.start()');
     await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-qr svg"))');
     const refreshedPair=[...stack.app.store.items.values()].find(s=>s.status==="CREATED"&&s.pairCode).pairCode;
     assert.notEqual(refreshedPair,oldPair);
@@ -64,14 +77,16 @@ async function run(){
     await cdp.value(kiosk,'window.realPairNow=Date.now;Date.now=()=>realPairNow()+181000');
     await cdp.wait(kiosk,'state.step === 0 && !window.DigilockerUI.isActive()');
     await cdp.value(kiosk,'Date.now=window.realPairNow');
-    await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-launch:not([disabled])"))');
-    await cdp.value(kiosk,'document.querySelector(".dl-launch").click()');
+    await cdp.wait(kiosk,'Boolean(document.querySelector("button[data-digilocker=service]:not([disabled])"))');
+    await cdp.value(kiosk,'document.querySelector("button[data-digilocker=service]").click()');
     await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-qr svg"))');
     const qrUrl=stack.config.localOrigin+"/digilocker/start/"+[...stack.app.store.items.values()].find(s=>s.status==="CREATED"&&s.pairCode).pairCode;
     assert.ok(qrUrl.startsWith(stack.config.localOrigin+"/digilocker/start/"));
     await shot(kiosk,"02-pair.png");
     const phone=await page(412,915);lastPhone=phone;await cdp.send("Page.navigate",{url:qrUrl},phone);
     await cdp.wait(phone,'Boolean(document.querySelector("button[value=allow]"))');
+    await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-transfer-art"))');
+    await shot(kiosk,"03-connected.png");
     await cdp.value(phone,'document.querySelector("button[value=allow]").click()');
     await cdp.wait(phone,'document.querySelectorAll("input[type=checkbox]").length === 3');
     assert.equal(await cdp.value(phone,'document.querySelectorAll("input:checked").length'),0);
@@ -79,33 +94,45 @@ async function run(){
     await shot(phone,"03-phone-selection.png");
     await cdp.value(phone,'document.querySelector("button.send").click()');
     await cdp.wait(phone,'Boolean(document.querySelector(".result.ok"))');
-    await cdp.wait(kiosk,'document.querySelectorAll(".dl-files li").length === 2');
+    await cdp.wait(kiosk,'state.step === 2 && jobFiles().length === 2');
+    assert.equal(await cdp.value(kiosk,'document.querySelectorAll("[data-digilocker=confirm], .dl-files, .dl-progress").length'),0);
     assert.equal(stack.mock.audit.revoked,1);await shot(kiosk,"04-documents-ready.png");
-    await cdp.value(kiosk,'document.querySelector("[data-digilocker=confirm]").click()');
     await cdp.wait(kiosk,'state.step === 2 && jobFiles().length === 2');
     assert.equal(await cdp.value(kiosk,'effectivePageCount()'),3);
-    await cdp.value(kiosk,'state.settings.copies=2;state.settings.colorMode="color";render()');
-    const pricing=await cdp.value(kiosk,'priceDetails()');assert.equal(pricing.total,3*2*pricing.rates.color);assert.ok(pricing.total>0);
+    // The sample DigiLocker service defaults to free; use explicit sample rates
+    // for this payment-path test, including any per-kiosk override.
+    const pricing=await cdp.value(kiosk,'(async()=>{stopConfigPolling();await refreshKioskConfig({rerender:false});state.pricing=Object.fromEntries(services.map(s=>[s.id,{bw:2,color:10}]));state.settings.copies=2;state.settings.colorMode="color";render();return priceDetails();})()');
+    assert.equal(pricing.total,3*2*pricing.rates.color);assert.ok(pricing.total>0);
     assert.equal([...stack.app.store.items.values()][0].status,"READY");
     await cdp.value(kiosk,'goToNextStep()');
     await cdp.wait(kiosk,'state.step === 3 && Boolean(document.querySelector("[data-action=demo-payment-success]"))');
     assert.notEqual(await cdp.value(kiosk,'state.paymentStatus'),"Success");assert.equal([...stack.app.store.items.values()][0].status,"READY");
     await shot(kiosk,"05-existing-payment.png");
     await cdp.value(kiosk,'document.querySelector("[data-action=demo-payment-success]").click()');
+    await cdp.wait(kiosk,'state.printJob?.status === "printing" && Boolean(document.querySelector(".tq-printing-full .print-motion.is-running"))');
+    const animationStarted=Date.now();
+    assert.equal([...stack.app.store.items.values()][0].status,"PRINTING");
+    await new Promise(resolve=>setTimeout(resolve,1200));
+    await shot(kiosk,"05-printing-animation.png");
+    assert.equal(await cdp.value(kiosk,'getComputedStyle(document.querySelector(".tq-printing-full .print-motion-paper")).animationName'),"print-paper-feed");
+    await cdp.send("Emulation.setEmulatedMedia",{features:[{name:"prefers-reduced-motion",value:"reduce"}]},kiosk);
+    assert.equal(await cdp.value(kiosk,'getComputedStyle(document.querySelector(".tq-printing-full .print-motion-paper")).animationName'),"none");
+    await cdp.send("Emulation.setEmulatedMedia",{features:[]},kiosk);
     await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-result")) && document.querySelector(".dl-content").textContent.includes("Printing complete")');
+    assert.ok(Date.now()-animationStarted>=5500,"Demo printing should remain visible for six seconds");
     assert.equal(stack.app.store.items.size,0);assert.equal(stack.app.store.reserved,0);
     assert.equal(await cdp.value(kiosk,'jobFiles().some(f=>f.printContentBase64 || f.previewUrl)'),false);
     await shot(kiosk,"06-complete.png");
-    await cdp.value(kiosk,'document.querySelector("[data-digilocker=home]").click()');
-    await cdp.wait(kiosk,'state.step === 0 && Boolean(document.querySelector(".dl-launch"))');
+    await cdp.value(kiosk,'document.querySelector("[data-digilocker=back]").click()');
+    await cdp.wait(kiosk,'state.step === 0 && Boolean(document.querySelector("button[data-digilocker=service]"))');
     // Leaving the existing preview must also clear the feature session and bytes.
-    await cdp.value(kiosk,'document.querySelector(".dl-launch").click()');
+    await cdp.value(kiosk,'document.querySelector("button[data-digilocker=service]").click()');
     await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-qr svg"))');
     const flow=require("./flow.cjs"),pending=[...stack.app.store.items.values()][0];
     const simulatedPhone=await flow.connect(stack,{qrUrl:`${stack.config.localOrigin}/digilocker/start/${pending.pairCode}`});
     await flow.select(stack,{sessionId:pending.id},simulatedPhone);
-    await cdp.wait(kiosk,'document.querySelectorAll(".dl-files li").length === 2');
-    await cdp.value(kiosk,'document.querySelector("[data-digilocker=confirm]").click()');
+    await cdp.wait(kiosk,'state.step === 2 && jobFiles().length === 2');
+    assert.equal(await cdp.value(kiosk,'document.querySelectorAll("[data-digilocker=confirm], .dl-files, .dl-progress").length'),0);
     await cdp.wait(kiosk,'state.step === 2 && jobFiles().length === 2');
     const previewDeadline=await cdp.value(kiosk,'state.customerInactivityDeadline');
     await cdp.value(kiosk,'for(let i=0;i<30;i++)render()');
@@ -120,20 +147,20 @@ async function run(){
     await new Promise(r=>setTimeout(r,300));assert.equal(stack.app.store.items.size,0);assert.equal(stack.app.store.reserved,0);
     assert.ok(timedOutBytes.every(b=>b===0));
     for(const language of ["hi","mr"]){
-      await cdp.value(kiosk,`state.customerLanguage=${JSON.stringify(language)};render();document.querySelector(".dl-launch").click()`);
+      await cdp.value(kiosk,`state.customerLanguage=${JSON.stringify(language)};render();document.querySelector("button[data-digilocker=service]").click()`);
       await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-qr svg"))');
       const header=await cdp.value(kiosk,'document.querySelector(".dl-stage h1").textContent');assert.ok(/[\u0900-\u097f]/.test(header));
-      await cdp.value(kiosk,'document.querySelector("[data-digilocker=home]").click()');
+      await cdp.value(kiosk,'document.querySelector("[data-digilocker=back]").click()');
       await cdp.wait(kiosk,'state.step === 0');
     }
     // Exercise the same reset entry that the existing inactivity timer invokes.
-    await cdp.value(kiosk,'state.customerLanguage="en";render();document.querySelector(".dl-launch").click()');
+    await cdp.value(kiosk,'state.customerLanguage="en";render();document.querySelector("button[data-digilocker=service]").click()');
     await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-qr svg"))');
     await cdp.value(kiosk,'resetCustomer();render()');
     await new Promise(r=>setTimeout(r,300));assert.equal(stack.app.store.items.size,0);
     // The phone must clear its document list and revoke access even if nobody
     // touches the kiosk again. Neither periodic status checks nor redraws renew it.
-    await cdp.value(kiosk,'document.querySelector(".dl-launch").click()');
+    await cdp.value(kiosk,'document.querySelector("button[data-digilocker=service]").click()');
     await cdp.wait(kiosk,'Boolean(document.querySelector(".dl-qr svg"))');
     const idlePhoneUrl=stack.config.localOrigin+"/digilocker/start/"+[...stack.app.store.items.values()].find(s=>s.status==="CREATED"&&s.pairCode).pairCode;
     await cdp.send("Page.navigate",{url:idlePhoneUrl},phone);

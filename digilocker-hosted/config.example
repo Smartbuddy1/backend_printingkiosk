@@ -6,9 +6,14 @@ DIGILOCKER_PORT=5091
 PUBLIC_BASE_URL=https://api.example.com
 DIGILOCKER_REDIRECT_URI=https://api.example.com/digilocker/callback
 DIGILOCKER_ALLOWED_ORIGINS=https://www.example.com
+# Set the actual loopback address of the separately configured kiosk backend.
+# Required before activation; its /api/kiosk/config must know the kiosk assignment.
+DIGILOCKER_KIOSK_BACKEND_URL=http://127.0.0.1:5080
 # Add approved credentials only on the server, then explicitly enable above.
 DIGILOCKER_CLIENT_ID=
 DIGILOCKER_CLIENT_SECRET=
 DIGILOCKER_PURPOSE="Print selected documents at kiosk"
 DIGILOCKER_SERVICE_NAME="Printing Kiosk"
 DIGILOCKER_REQ_DOCTYPES=
+# Enable only after installing Linux python3 and qpdf and passing test:pdf-password.
+DIGILOCKER_PDF_UNLOCK=false

@@ -5,6 +5,30 @@ printing backend, loads its environment, connects to its database, or runs the m
 provider. Use `node digilocker-hosted/start.cjs` with a dedicated environment file
 based on `config.example`. It listens only on 127.0.0.1 (default port 5091).
 
+Use the validated Node 24 runtime for this service. Node 20 lacks
+`Promise.withResolvers`, which the bundled PDF worker uses: even a valid,
+unencrypted one-page PDF failed on the EC2 Node 20 runtime. Keep the DigiLocker
+runtime separate from the existing backend runtime. Run the hosted tests with the
+same absolute Node executable used in systemd, not whichever `node` is on PATH.
+Enabled startup now opens a generated one-page PDF with the actual worker before
+binding its listener; missing or incompatible parser assets prevent readiness.
+No customer data or provider calls are involved in this check.
+
+Password-protected PDFs use an optional Linux phone flow:
+`DIGILOCKER_PDF_UNLOCK=true` requires `/usr/bin/python3` with `os.memfd_create`
+and `/usr/bin/qpdf` (tested with 10.6.3). Run `npm run test:pdf-password` with the
+service Node runtime before activation. Windows skips the native helper tests.
+The provider HMAC is verified before retaining encrypted bytes. The provider
+token is revoked before password entry; documents stay unavailable to the kiosk
+until all selected PDFs are decrypted and validated. Customers enter their PDF
+opening password on the same paired phone, never their DigiLocker PIN or OTP.
+Passwords travel only in HTTPS POST and private process pipes, not command-line
+arguments, environment, logs or persistent files. The Linux helper uses anonymous
+memory file descriptors, bounded resources and a process-group timeout/cancel.
+Wrong passwords can be retried up to five times per document. Phone inactivity,
+cancellation and session expiry clear retained files. Successful output is parsed
+again with the usual MIME, size and page limits before preview/print handoff.
+
 Proxy `/digilocker/` and `/api/digilocker/` to this listener, preserving Host,
 X-Real-IP and X-Forwarded-Proto. Disable access logs for these routes so authorization
 codes, state and pairing URLs are not retained in access logs. Do not proxy unrelated
@@ -50,3 +74,23 @@ The setting is checked for each new session, without a stale policy cache. Sessi
 already accepted may finish so disabling a service does not interrupt an in-progress
 paid job. This assignment does not replace the global credential and approval
 requirements. The isolated mock preview retains its demo service card.
+
+## Activation preparation
+
+Use the dedicated hosted environment from `config.example`, not the local mock
+environment. Set the actual `DIGILOCKER_KIOSK_BACKEND_URL` explicitly: credentials
+alone cannot pass the kiosk assignment check if this backend is unreachable.
+
+Before starting the approved staging service, validate its dedicated environment:
+
+```powershell
+npm run digilocker:check-live -- --hosted --env /absolute/path/to/dedicated/.env
+```
+
+Alternatively, with the service environment already supplied:
+`node tools/check-digilocker-config.cjs --hosted`.
+The check makes no network calls, does not print credentials, and does not prove
+that credentials or provider permissions have been approved.
+
+See [DIGILOCKER-READINESS.md](../DIGILOCKER-READINESS.md) for the integration audit
+and remaining staging checks.

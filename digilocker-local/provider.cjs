@@ -63,36 +63,50 @@ class Provider {
     const c = this.config;
     const data = await this.json(c.endpoints.token, { method: "POST", signal, headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: c.redirectUri, code_verifier: verifier, client_id: c.clientId, client_secret: c.clientSecret }) });
-    if (typeof data.access_token !== "string" || !data.access_token || data.access_token.length > 8192 || String(data.token_type).toLowerCase() !== "bearer") throw new Failure("PROVIDER_RESPONSE_INVALID", 502);
+    if (typeof data?.access_token !== "string" || !data.access_token || data.access_token.length > 8192 || String(data.token_type).toLowerCase() !== "bearer") throw new Failure("PROVIDER_RESPONSE_INVALID", 502);
     // Intentionally discard id_token, refresh token and all account/identity fields.
     return { accessToken: data.access_token, scope: typeof data.scope === "string" ? data.scope : "" };
   }
-  async list(token, scope, signal) {
+  async list(token, scope, signal, report = () => {}) {
     const headers = { Authorization: `Bearer ${token}` };
-    const issued = await this.json(this.config.endpoints.issued, { headers, signal });
-    if (!Array.isArray(issued.items) || issued.items.length > 1000) throw new Failure("PROVIDER_RESPONSE_INVALID", 502);
-    const docs = issued.items.map(normalizeDocument).filter(Boolean);
-    if (scope.split(/\s+/).includes("files.uploadeddocs")) {
+    const grants = new Set(String(scope || "").split(/\s+/));
+    const docs = [];
+    let issuedCount=0,uploadedCount=0;
+    if (grants.has("files.issueddocs")) {
+      const issued = await this.json(this.config.endpoints.issued, { headers, signal });
+      if (!Array.isArray(issued?.items) || issued.items.length > 1000) throw new Failure("PROVIDER_RESPONSE_INVALID", 502);
+      docs.push(...issued.items.map(normalizeDocument).filter(Boolean));
+      issuedCount=issued.items.length;
+    }
+    if (grants.has("files.uploadeddocs")) {
       const queue = [""], seen = new Set();
       while (queue.length && seen.size < 20 && docs.length < 1000) {
         const id = queue.shift(); if (seen.has(id)) continue; seen.add(id);
         const data = await this.json(this.config.endpoints.uploaded + encodeURIComponent(id), { headers, signal });
-        if (!Array.isArray(data.items) || data.items.length > 1000) throw new Failure("PROVIDER_RESPONSE_INVALID", 502);
+        if (!Array.isArray(data?.items) || data.items.length > 1000) throw new Failure("PROVIDER_RESPONSE_INVALID", 502);
+        uploadedCount+=data.items.filter(item=>item?.type!=="dir").length;
         for (const item of data.items) {
           if (item?.type === "dir" && typeof item.id === "string" && item.id.length <= 256 && queue.length < 20) queue.push(item.id);
           else { const doc = normalizeDocument(item); if (doc) docs.push(doc); }
         }
       }
     }
+    report({issuedCount,uploadedCount,printableCount:docs.length});
     return new Map(docs.slice(0, 1000).map(d => [d.uri, d]));
   }
-  async download(doc, token, signal) {
+  async download(doc, token, signal, { allowEncrypted = false } = {}) {
     const { bytes, headers } = await this.request(this.config.endpoints.file + encodeURIComponent(doc.uri), {
       headers: { Authorization: `Bearer ${token}`, Accept: doc.mime }, signal
     }, this.config.maxBytes);
     try {
       verifyHmac(bytes, headers.get("hmac"), this.config.clientSecret);
-      const { mime, pages } = await validateDocument(bytes, headers.get("content-type"), this.config, signal);
+      let validated;
+      try { validated = await validateDocument(bytes, headers.get("content-type"), this.config, signal); }
+      catch(error) {
+        if (allowEncrypted && doc.mime === "application/pdf" && error.code === "PDF_PASSWORD_REQUIRED") return { bytes, mime:doc.mime, pages:null, size:bytes.length, name:doc.name, encrypted:true };
+        throw error;
+      }
+      const { mime, pages } = validated;
       if (mime !== doc.mime) throw new Failure("FILE_TYPE_INVALID", 415);
       return { bytes, mime, pages, size: bytes.length, name: doc.name };
     } catch (error) { bytes.fill(0); throw error; }

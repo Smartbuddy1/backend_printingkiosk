@@ -14,9 +14,9 @@ Run as `ec2-user` on the existing API EC2 server:
 cd /home/ec2-user/backend_printingkiosk
 git status --short
 git pull --ff-only origin main
-npm ci --omit=dev --ignore-scripts
-npm run test:digilocker-hosted
-node --test tools/mobile-payment-url.test.cjs
+NODEBIN=/home/ec2-user/printing-kiosk-digilocker/runtimes/node-v24.22.3-linux-x64/bin
+PATH="$NODEBIN:$PATH" npm ci --omit=dev --ignore-scripts
+"$NODEBIN/node" --test digilocker-hosted/test/hosted.test.cjs tools/mobile-payment-url.test.cjs
 ```
 
 Stop if the checkout has unexpected local changes or any command fails. Keep

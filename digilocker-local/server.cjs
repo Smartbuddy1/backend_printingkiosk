@@ -82,6 +82,17 @@ function createService(config, options = {}) {
       await store.end(session,"FAILED",{code:error instanceof Failure ? error.code : "PROVIDER_UNAVAILABLE"}); throw error;
     }
   }
+  async function confirmPhoneTransfer(session) {
+    if (!session.confirmPreview) return;
+    const deadline = Date.now() + 30000;
+    while (session.status === "READY" && !session.previewAccepted && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    if (!session.previewAccepted) {
+      if (session.status === "READY") await store.end(session,"FAILED",{code:"DOCUMENT_UNAVAILABLE"});
+      throw new Failure("DOCUMENT_UNAVAILABLE", 422);
+    }
+  }
   function ready(session){
     store.alive(session);
     session.awaitingPassword=false;session.files=session.pending;session.pending=[];
@@ -177,9 +188,10 @@ function createService(config, options = {}) {
           const body=await readBody(req);
           const kioskId=config.hosted ? await (options.kioskPolicy || (id=>require("./kiosk-policy.cjs").requireKioskEnabled(config,id)))(body.kioskId) : config.kioskId;
           const created=store.create(body.language);session=created.item;session.kioskId=kioskId;
+          session.confirmPreview = body.confirmPreview === true;
           const qrUrl=`${config.publicBase}/digilocker/start/${session.pairCode}`;
           const qrSvg=await QRCode.toString(qrUrl,{type:"svg",width:320,errorCorrectionLevel:"M",margin:4});
-          return json(res,201,{sessionId:session.id,kioskSecret:created.kioskSecret,pairCode:session.pairCode,expiresAt:session.expiresAt,pairExpiresAt:session.pairExpiresAt,qrUrl,qrSvg});
+          return json(res,201,{sessionId:session.id,kioskSecret:created.kioskSecret,confirmPreview:session.confirmPreview,pairCode:session.pairCode,expiresAt:session.expiresAt,pairExpiresAt:session.pairExpiresAt,qrUrl,qrSvg});
         }
         const start=/^\/digilocker\/start\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
         if(req.method==="GET" && start){
@@ -260,6 +272,7 @@ function createService(config, options = {}) {
             }
             res.setHeader("Set-Cookie",cookie("",0));session.phoneHash=null;session.csrf=null;
             if((req.headers["content-type"]||"").startsWith("application/json"))return json(res,200,{status:"READY"});
+            await confirmPhoneTransfer(session);
             return redirect(res,`/digilocker/result?lang=${session.language}`);
           }
           if(action==="unlock" && req.method==="POST"){
@@ -290,9 +303,11 @@ function createService(config, options = {}) {
             if(session.awaitingPassword)return redirect(res,"/digilocker/unlock");
             res.setHeader("Set-Cookie",cookie("",0));session.phoneHash=null;session.csrf=null;
             if((req.headers["content-type"]||"").startsWith("application/json"))return json(res,200,{status:"READY"});
+            await confirmPhoneTransfer(session);
             return redirect(res,`/digilocker/result?lang=${session.language}`);
           }
           kioskOrigin(req);session=store.kiosk(id,req.headers["x-kiosk-secret"]);
+          if(action==="status" && req.method==="POST" && session.status==="READY"){session.previewAccepted=true;return json(res,200,{ok:true});}
           if(action==="status" && req.method==="GET")return json(res,200,{status:session.status,expiresAt:session.expiresAt,phoneActivityAt:session.phoneActivityAt||0,error:session.error,files:session.status==="READY"?session.files.map(({bytes,...meta})=>meta):[]});
           if(action.startsWith("files/") && req.method==="GET"){
             if(!["READY","PRINTING"].includes(session.status))throw new Failure("STATE_INVALID",409);

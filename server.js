@@ -890,14 +890,14 @@ function projectForKiosk(kiosk = {}) {
 function clientForProject(project = null) {
   if (!project) return null;
 
-  return db.kioskAdmins.find((admin) => (
-    admin.adminId === project.adminId ||
-    (Array.isArray(admin.projectIds) && admin.projectIds.includes(project.projectId))
-  )) || null;
+  if (project.adminId) return db.kioskAdmins.find(admin => admin.adminId === project.adminId) || null;
+  return db.kioskAdmins.find(admin => (admin.projectIds || []).includes(project.projectId)) || null;
 }
 
 function clientForKiosk(kiosk = null) {
   if (!kiosk) return null;
+  const project = projectForKiosk(kiosk);
+  if (project?.adminId) return clientForProject(project);
   const directAdminId = normalizeAdminId(kiosk.adminId || "", "");
   if (directAdminId) {
     const directAdmin = db.kioskAdmins.find((admin) => admin.adminId === directAdminId);
@@ -916,7 +916,7 @@ function serviceAppliesToKiosk(service = {}, kiosk = null, kioskId = "") {
   if ((service.excludedKioskIds || []).map(value => normalizeKioskCode(value)).includes(id)) return false;
 
   if (kioskIds.length > 0) {
-    return Boolean(id && kioskIds.includes(id));
+    return Boolean(kiosk && id && kioskIds.includes(id) && (!projectIds.length || projectIds.includes(projectId)));
   }
 
   if (kioskIds.length === 0 && projectIds.length === 0) {
@@ -932,6 +932,7 @@ function serviceAppliesToKiosk(service = {}, kiosk = null, kioskId = "") {
 function servicesForKiosk(kioskId = "") {
   const id = normalizeKioskCode(kioskId);
   const kiosk = kioskForConfig(id);
+  if (id && !kiosk) return [];
   return db.services.filter((service) => !id || serviceAppliesToKiosk(service, kiosk, id));
 }
 
@@ -949,19 +950,7 @@ function findKioskAdminByPublicIdentifier(identifier = "") {
 }
 
 function addPublicAdminProjectIds(projectIds, admin = {}) {
-  if (!admin?.adminId) return;
-
-  (admin.projectIds || []).forEach((projectId) => {
-    const id = slug(projectId, "");
-    if (id) projectIds.add(id);
-  });
-
-  db.projects
-    .filter((project) => project.adminId === admin.adminId)
-    .forEach((project) => {
-      const id = slug(project.projectId, "");
-      if (id) projectIds.add(id);
-    });
+  for (const id of projectIdsForAdmin({adminId: admin.adminId})) projectIds.add(id);
 }
 
 function publicDemoAdminCandidates() {
@@ -989,53 +978,15 @@ function serviceHasUploadedTemplateForProjects(service = {}, projectIds = new Se
 }
 
 function publicProjectIdsForScope(scope = {}) {
-  const projectIds = new Set();
-  const requestedProjectId = slug(scope.projectId || "", "");
-
-  if (requestedProjectId) {
-    projectIds.add(requestedProjectId);
-  }
-
-  const adminIdentifier = scope.adminId || scope.adminEmail || "";
-  const requestedAdmin = findKioskAdminByPublicIdentifier(adminIdentifier);
-  if (adminIdentifier && !requestedAdmin) {
-    return projectIds;
-  }
-
-  if (requestedAdmin) {
-    addPublicAdminProjectIds(projectIds, requestedAdmin);
-  }
-
-  const kiosk = kioskForConfig(scope.kioskId);
-  if (kiosk?.projectId) {
-    const kioskProjectId = slug(kiosk.projectId, "");
-    if (kioskProjectId) projectIds.add(kioskProjectId);
-  }
-
-  if (projectIds.size || !scope.demo || adminIdentifier || scope.projectId) {
-    return projectIds;
-  }
-
-  const demoAdmins = publicDemoAdminCandidates();
-  const uploadedProjectIds = new Set();
-
-  demoAdmins.forEach((admin) => {
-    const adminProjectIds = new Set();
-    addPublicAdminProjectIds(adminProjectIds, admin);
-    if (db.services.some((service) => serviceHasUploadedTemplateForProjects(service, adminProjectIds))) {
-      adminProjectIds.forEach((projectId) => uploadedProjectIds.add(projectId));
-    }
-  });
-
-  if (uploadedProjectIds.size) {
-    return uploadedProjectIds;
-  }
-
-  if (demoAdmins.length === 1) {
-    addPublicAdminProjectIds(projectIds, demoAdmins[0]);
-  }
-
-  return projectIds;
+  const ids = new Set();
+  const identifier = scope.adminId || scope.adminEmail || "";
+  const admin = findKioskAdminByPublicIdentifier(identifier);
+  if (identifier && !admin) return ids;
+  if (scope.projectId) {
+    const project = db.projects.find(p => p.projectId === slug(scope.projectId, ""));
+    if (project && (!admin || clientForProject(project)?.adminId === admin.adminId)) ids.add(project.projectId);
+  } else if (admin) addPublicAdminProjectIds(ids, admin);
+  return ids;
 }
 
 function servicesForPublicScope(scope = {}) {
@@ -1045,9 +996,7 @@ function servicesForPublicScope(scope = {}) {
   const hasRequestedProject = Boolean(scope.projectId);
   const kiosk = kioskForConfig(kioskId);
 
-  if (kioskId && kiosk) {
-    return servicesForKiosk(kioskId);
-  }
+  if (kioskId && (kiosk || !scope.demo)) return kiosk ? servicesForKiosk(kioskId) : [];
 
   const projectIds = publicProjectIdsForScope(scope);
   if (projectIds.size) {
@@ -1067,9 +1016,7 @@ function servicesForPublicScope(scope = {}) {
     });
   }
 
-  if (!hasExplicitScope || (scope.demo && !hasRequestedAdmin && !hasRequestedProject)) {
-    return db.services;
-  }
+  if (scope.demo && !hasRequestedAdmin && !hasRequestedProject) return DEFAULT_SERVICES;
 
   return kioskId ? servicesForKiosk(kioskId) : [];
 }
@@ -1104,9 +1051,9 @@ function normalizeKioskCustomerSettings(settings = {}, existing = {}) {
 }
 
 function kioskConfigResponse(kioskId = "") {
-  const filteredServices = servicesForKiosk(kioskId).filter((s) => s.enabled !== false);
+  const filteredServices = (kioskId ? servicesForKiosk(kioskId) : []).filter((s) => s.enabled !== false);
   const kiosk = kioskForConfig(kioskId);
-  const clientBrand = publicKioskClientBrand(clientForKiosk(kiosk));
+  const clientBrand = publicKioskClientBrand(clientForKiosk(kiosk), kiosk);
   const pricing = pricingForServices(filteredServices, kioskId ? [kioskId] : []);
 
   return {
@@ -1161,7 +1108,7 @@ function publicServicesResponse(scope = {}) {
   const clientBrand = publicKioskClientBrand(
     clientForKiosk(kiosk) ||
     requestedAdmin ||
-    clientForProject(requestedProject)
+    clientForProject(requestedProject), kiosk
   );
   const pricing = pricingForServices(enabledServices, requestScope.kioskId ? [requestScope.kioskId] : []);
 
@@ -1206,7 +1153,7 @@ function json(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Razorpay-Signature, X-Razorpay-Event-Id, X-Kiosk-Config-Version",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Razorpay-Signature, X-Razorpay-Event-Id, X-Kiosk-Config-Version, X-Upload-Control",
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
   });
   res.end(JSON.stringify(body, null, 2));
@@ -1847,13 +1794,18 @@ function publicIdleScreensaver(admin = {}) {
   };
 }
 
-function publicKioskClientBrand(admin = {}) {
+function idleSettingsForKiosk(admin, kiosk) {
+  const override = kiosk?.idleScreensaverSettings;
+  return override?.clientId === admin?.adminId ? {...admin, ...override} : admin;
+}
+
+function publicKioskClientBrand(admin = {}, kiosk = null) {
   if (!admin) return null;
   const brand = kioskAdminBrandFields(admin);
   const logoUrl = brand.logoUrl;
   const title = brand.kioskTitle;
   const subtitle = brand.kioskSubtitle;
-  const idleScreensaver = publicIdleScreensaver(admin);
+  const idleScreensaver = publicIdleScreensaver(idleSettingsForKiosk(admin, kiosk));
 
   if (!logoUrl && !title && !subtitle && idleScreensaver.mode === "none") return null;
 
@@ -2096,55 +2048,19 @@ setInterval(() => {
   if (changed || adminSessions.size) saveAdminSessions();
 }, 5 * 60 * 1000);
 
-// mobileUploadSessions is persisted the same way as adminSessions above, and
-// for the same reason: a plain in-memory Map is wiped on every backend
-// restart (crash, redeploy, EC2 reboot), so a QR code that had been sitting
-// on the kiosk screen unscanned - completely untouched, nobody's fault -
-// would suddenly 404 as "expired" the moment someone finally scanned it.
-// Only the lightweight pre-upload fields are persisted (token/url/qrSvg/
-// timestamps) - never stagedFiles/files, which hold raw file bytes and would
-// be far too large and churn-heavy to write to disk on every stage/upload
-// call. A restart mid-upload still loses any staged-but-not-yet-sent files,
-// but the QR itself stays valid instead of dead-ending, and status/file
-// fields are always reset to a fresh "waiting" state on load below.
-function loadMobileUploadSessions() {
-  try {
-    if (!fs.existsSync(MOBILE_UPLOAD_SESSIONS_PATH)) return;
-    const raw = JSON.parse(fs.readFileSync(MOBILE_UPLOAD_SESSIONS_PATH, "utf8"));
-    const now = Date.now();
-    Object.entries(raw || {}).forEach(([token, session]) => {
-      if (session && Number(session.expiresAt) > now) {
-        mobileUploadSessions.set(token, {
-          ...session,
-          status: "waiting",
-          file: null,
-          files: [],
-          stagedFiles: []
-        });
-      }
-    });
-  } catch (error) {
-    console.error(`Could not load mobile upload sessions: ${error.message}`);
-  }
-}
+// Customer upload capabilities stay in memory and expire on restart.
+function loadMobileUploadSessions() { /* A server restart invalidates every previous customer QR. */ }
+function saveMobileUploadSessions() { /* Customer capabilities and documents stay in memory only. */ }
 
-function saveMobileUploadSessions() {
-  try {
-    const lightweight = {};
-    for (const [token, session] of mobileUploadSessions) {
-      lightweight[token] = {
-        token: session.token,
-        publicBaseUrl: session.publicBaseUrl,
-        uploadUrl: session.uploadUrl,
-        qrSvg: session.qrSvg,
-        createdAt: session.createdAt,
-        expiresAt: session.expiresAt
-      };
-    }
-    writeJsonAtomic(MOBILE_UPLOAD_SESSIONS_PATH, lightweight);
-  } catch (error) {
-    console.error(`Could not save mobile upload sessions: ${error.message}`);
+function activeUploadSession(token) {
+  const session = mobileUploadSessions.get(token);
+  if (!session) return null;
+  const kiosk = session.kioskId ? kioskForConfig(session.kioskId) : null;
+  if (session.expiresAt <= Date.now() || (session.kioskId && (!kiosk || clientForKiosk(kiosk)?.adminId !== session.clientId || !servicesForKiosk(session.kioskId).some(s => s.id === session.serviceId && s.enabled !== false)))) {
+    mobileUploadSessions.delete(token);
+    return null;
   }
+  return session;
 }
 
 // Same periodic sweep pattern as adminSessions above, just on its own timer
@@ -2177,10 +2093,7 @@ function projectIdsForAdmin(session = {}) {
   if (session.role === "super-admin") return new Set(db.projects.map((project) => project.projectId));
   const account = findKioskAdminById(session.adminId);
   if (!account || account.status === "disabled") return new Set();
-  return new Set([
-    ...(account.projectIds || []).map((id) => String(id || "").trim()),
-    ...db.projects.filter((project) => project.adminId === account.adminId).map((project) => project.projectId)
-  ].filter(Boolean));
+  return new Set(db.projects.filter(project => clientForProject(project)?.adminId === account.adminId).map(project => project.projectId));
 }
 
 function projectIdsWithKiosks() {
@@ -2210,10 +2123,9 @@ function kioskIdsForAdmin(session = {}) {
       .map((kioskId) => normalizeKioskCode(kioskId))
       .filter(Boolean)
   );
-  if (explicitKioskIds.size) return explicitKioskIds;
-
   const projectKiosks = db.kiosks
-    .filter((kiosk) => assignedProjectIds.has(slug(kiosk.projectId, "")))
+    .filter(kiosk => assignedProjectIds.has(slug(kiosk.projectId, "")) && clientForKiosk(kiosk)?.adminId === account.adminId)
+    .filter(kiosk => !explicitKioskIds.size || explicitKioskIds.has(normalizeKioskCode(kiosk.kioskId)))
     .map((kiosk) => normalizeKioskCode(kiosk.kioskId))
     .filter(Boolean);
 
@@ -2901,8 +2813,8 @@ function localAgentUrl() {
   return process.env.LOCAL_AGENT_URL || `http://localhost:${process.env.AGENT_PORT || 5077}`;
 }
 
-async function createMobileUploadSession(req) {
-  const token = crypto.randomBytes(4).toString("hex").toUpperCase();
+async function createMobileUploadSession(req, scope = {}) {
+  const token = crypto.randomBytes(16).toString("hex").toUpperCase();
   const publicBaseUrl = process.env.PUBLIC_BASE_URL
     ? process.env.PUBLIC_BASE_URL.replace(/\/+$/, "")
     : process.env.BACKEND_URL
@@ -2918,6 +2830,8 @@ async function createMobileUploadSession(req) {
 
   const session = {
     token,
+    ...scope,
+    controlToken: crypto.randomBytes(24).toString("hex"),
     publicBaseUrl,
     uploadUrl,
     qrSvg,
@@ -4466,13 +4380,9 @@ async function saveSuperAdminCollection(collection) {
       syncServicePricing();
     }
     touchConfig(`${collection}-updated`);
-    if (collection === "pricing") {
-      await saveSettings();
-    }
-  } else if (collection === "admins") {
+  } else if (collection === "kioskAdmins" || collection === "projects") {
     // Bump config version when client brand/logo/name changes so kiosks refresh in real time.
     touchConfig("brand-updated");
-    await saveSettings();
   }
 
   return saveData({ services: collection === "services" });
@@ -4590,9 +4500,9 @@ function validateSuperAdminRecord(collection, record, existing = null) {
     // kiosk ID (always unique, checked above) is what the installer/backend
     // actually key activation off of, so the same code can be reused as a
     // standard install PIN for every kiosk instead of tracking one per kiosk.
-    if (!db.projects.some((project) => project.projectId === record.projectId)) {
-      return "Select an existing project before creating the kiosk.";
-    }
+    const project = db.projects.find(project => project.projectId === record.projectId);
+    if (!project) return "Select an existing project before creating the kiosk.";
+    if (record.adminId && clientForProject(project)?.adminId !== record.adminId) return "Kiosk client must match its project's client.";
   }
 
   if (collection === "kioskAdmins") {
@@ -4619,10 +4529,12 @@ function withServiceWrite(req, res, body, action) {
   if (req.method === "GET") return action();
   const task = serviceWriteQueue.then(async () => {
     const supplied = req.headers["x-kiosk-config-version"] ?? body?.expectedConfigVersion;
-    const createsService = req.method === "POST" && /^\/api\/super-admin\/services\/?(?:\?.*)?$/.test(req.url);
-    if (supplied == null && !createsService) return json(res, 428, { error: "Reload service settings before saving. This page is out of date.", code: "SERVICE_VERSION_REQUIRED" });
-    if (supplied != null && (!Number.isSafeInteger(Number(supplied)) || Number(supplied) !== Number(db.config.version))) return json(res, 409, { error: "Service settings changed in another window. Reload and reapply your edit.", code: "SERVICE_VERSION_CONFLICT", config: db.config });
-    const before = JSON.parse(JSON.stringify({services: db.services, pricing: db.pricing, config: db.config}));
+    const createsService = req.method === "POST" && /^\/api\/super-admin\/(services|kiosks|projects|kioskAdmins)\/?(?:\?.*)?$/.test(req.url);
+    if (supplied == null && !createsService) return json(res, 428, { error: "Reload settings before saving. This page is out of date.", code: "SERVICE_VERSION_REQUIRED" });
+    if (supplied != null && (!Number.isSafeInteger(Number(supplied)) || Number(supplied) !== Number(db.config.version))) return json(res, 409, { error: "Settings changed in another window. Reload and reapply your edit.", code: "SERVICE_VERSION_CONFLICT", config: db.config });
+    const collection = req.url.split("/")[3]?.split("?")[0];
+    const extra = req.url.includes("/idle-screensaver") ? {kiosks: db.kiosks} : ["kiosks", "projects", "kioskAdmins"].includes(collection) ? {[collection]: db[collection]} : {};
+    const before = JSON.parse(JSON.stringify({services: db.services, pricing: db.pricing, config: db.config, ...extra}));
     try {
       const directory = path.join(path.dirname(DATA_PATH), ".service-history");
       fs.mkdirSync(directory, {recursive: true, mode: 0o700});
@@ -4641,6 +4553,25 @@ function withServiceWrite(req, res, body, action) {
   });
   serviceWriteQueue = task.catch(() => {});
   return task;
+}
+
+async function writeKioskPricing(req, res, kioskId, rates) {
+  const kiosk = kioskForConfig(kioskId);
+  if (!kiosk) return json(res, 404, {error: "Kiosk not found."});
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return json(res, 405, {error: "Unsupported pricing operation."});
+  const allowed = new Set(servicesForKiosk(kioskId).map(s => s.id));
+  if (req.method !== "DELETE" && (!rates || typeof rates !== "object" || Array.isArray(rates) || Object.entries(rates).some(([id, pair]) => !allowed.has(id) || !pair || [pair.bw, pair.color].some(value => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))))) {
+    return json(res, 400, {error: "Prices must belong to services assigned to this kiosk."});
+  }
+  const overrides = {...(db.pricing.__kiosks || {})};
+  if (req.method === "DELETE") delete overrides[kioskId];
+  else {
+    overrides[kioskId] = {...(overrides[kioskId] || {})};
+    for (const [id, pair] of Object.entries(rates)) overrides[kioskId][id] = {...serviceRates(id, kioskId), ...pair};
+  }
+  db.pricing = normalizePricing({...db.pricing, __kiosks: overrides}, db.services);
+  if (!(await saveSuperAdminCollection("pricing"))?.ok) return json(res, 502, {error: "Pricing could not be saved."});
+  return json(res, 200, {pricing: pricingForServices(servicesForKiosk(kioskId), [kioskId]), config: db.config});
 }
 
 async function handleKioskServiceWrite(req, res, kioskId, serviceId, body) {
@@ -5445,18 +5376,35 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     }
   }
 
+  if (req.method === "DELETE" && /^\/api\/mobile-upload\/[^/]+$/.test(url.pathname)) {
+    const token = url.pathname.split("/")[3];
+    const session = activeUploadSession(token);
+    if (!session) return json(res, 200, {cancelled: true});
+    if (req.headers["x-upload-control"] !== session.controlToken) return json(res, 403, {error: "Upload control token required."});
+    mobileUploadSessions.delete(token);
+    return json(res, 200, {cancelled: true});
+  }
+
   if (req.method === "GET" && url.pathname === "/api/mobile-upload/session") {
-    const session = await createMobileUploadSession(req);
-    return json(res, 200, uploadSessionResponse(session, req));
+    const kioskId = normalizeKioskCode(url.searchParams.get("kioskId"));
+    const serviceId = url.searchParams.get("serviceId") || "";
+    const kiosk = kioskForConfig(kioskId);
+    if (kioskId && (!kiosk || !servicesForKiosk(kioskId).some(s => s.id === serviceId && s.enabled !== false))) return json(res, 400, {error: "Select an available kiosk service."});
+    const session = await createMobileUploadSession(req, kioskId ? {kioskId, serviceId, clientId: clientForKiosk(kiosk)?.adminId || ""} : {});
+    return json(res, 200, {...uploadSessionResponse(session, req), controlToken: session.controlToken});
   }
 
   if (req.method === "GET" && url.pathname.startsWith("/api/mobile-upload/") && url.pathname.endsWith("/status")) {
     const token = url.pathname.split("/")[3];
-    const session = mobileUploadSessions.get(token);
+    const session = activeUploadSession(token);
 
     if (!session) {
       return json(res, 404, { error: "Upload session not found" });
     }
+
+    const control = req.headers["x-upload-control"];
+    if (control && control !== session.controlToken) return json(res, 403, {error: "Upload session does not belong to this customer."});
+    if (session.kioskId && !control) return json(res, 200, {status: session.status, claimed: Boolean(session.claimed)});
 
     // Mark session as claimed once the kiosk reads that the file was uploaded.
     // This signals the mobile page that this session is consumed and prevents
@@ -5472,7 +5420,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     const pathParts = url.pathname.split("/");
     const token = pathParts[2];
     const fileIndex = Number(pathParts[4] || 0);
-    const session = mobileUploadSessions.get(token);
+    const session = activeUploadSession(token);
     const files = Array.isArray(session?.files) && session.files.length ? session.files : session?.file ? [session.file] : [];
     const file = files[fileIndex];
 
@@ -5485,7 +5433,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
 
   if (req.method === "GET" && url.pathname.startsWith("/mobile-upload/")) {
     const token = url.pathname.split("/")[2];
-    return html(res, 200, renderMobileUploadPage(mobileUploadSessions.get(token)));
+    return html(res, 200, renderMobileUploadPage(activeUploadSession(token)));
   }
 
   // Phone -> server transfer only. Runs the instant a file passes the
@@ -5496,7 +5444,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   // never sets it past "staged".
   if (req.method === "POST" && url.pathname.startsWith("/mobile-upload/") && url.pathname.endsWith("/stage")) {
     const token = url.pathname.split("/")[2];
-    const session = mobileUploadSessions.get(token);
+    const session = activeUploadSession(token);
 
     if (!session) {
       return json(res, 404, { error: "This upload link has expired. Go back to the kiosk for a new QR code." });
@@ -5507,6 +5455,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     }
 
     const files = parseMultipartFiles(await readRawBody(req), req.headers["content-type"] || "");
+    if (activeUploadSession(token) !== session || session.status === "uploaded") return json(res, 409, {error: "This upload session has ended or was already used."});
     const validationError = validateUploadedFiles(files);
     if (validationError) {
       return json(res, validationError.status, { error: validationError.description });
@@ -5527,7 +5476,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   // route (no prior /stage call) is still honored for backward compatibility.
   if (req.method === "POST" && url.pathname.startsWith("/mobile-upload/") && url.pathname.endsWith("/upload")) {
     const token = url.pathname.split("/")[2];
-    const session = mobileUploadSessions.get(token);
+    const session = activeUploadSession(token);
 
     if (!session) {
       return html(res, 404, renderMobileUploadPage(null));
@@ -5551,6 +5500,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       files = parseMultipartFiles(await readRawBody(req), req.headers["content-type"] || "");
     }
 
+    if (activeUploadSession(token) !== session || session.status === "uploaded") return json(res, 409, {error: "This upload session has ended or was already used."});
     const validationError = validateUploadedFiles(files);
     if (validationError) {
       return html(res, validationError.status, renderMobileStatusPage({ ...validationError, warning: true }));
@@ -5909,38 +5859,19 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return json(res, 200, superAdminSnapshot());
     }
 
+    if (resource === "kiosk-pricing") {
+      return withServiceWrite(req, res, body, () => writeKioskPricing(req, res, decodeSegment(pathParts[3] || ""), body.rates || body));
+    }
     if (resource === "pricing") {
-      const serviceId = decodeSegment(pathParts[3] || "");
-
-      if (req.method === "GET" && !serviceId) {
-        return json(res, 200, {
-          pricing: db.pricing,
-          entries: Object.entries(db.pricing).map(([id, rates]) => ({ serviceId: id, ...rates }))
-        });
-      }
-
-      if ((req.method === "POST" || req.method === "PUT" || req.method === "PATCH") && !serviceId) {
-        db.pricing = normalizePricing(body.pricing || body, db.services);
-        saveSuperAdminCollection("pricing");
-        return json(res, 200, { pricing: db.pricing });
-      }
-
-      if ((req.method === "PUT" || req.method === "PATCH") && serviceId) {
-        if (!db.services.some((service) => service.id === serviceId)) {
-          return json(res, 404, { error: "Service not found" });
-        }
-        db.pricing = normalizePricing({
-          ...db.pricing,
-          [serviceId]: {
-            bw: numericPrice(body.bw, db.pricing[serviceId]?.bw || 0),
-            color: numericPrice(body.color, db.pricing[serviceId]?.color || 0)
-          }
-        }, db.services);
-        saveSuperAdminCollection("pricing");
-        return json(res, 200, { pricing: db.pricing, rates: db.pricing[serviceId] });
-      }
-
-      return json(res, 405, { error: "Unsupported pricing operation." });
+      return withServiceWrite(req, res, body, async () => {
+        const serviceId = decodeSegment(pathParts[3] || "");
+        if (req.method === "GET") return json(res, 200, {pricing: db.pricing, config: db.config});
+        if (!["POST", "PUT", "PATCH"].includes(req.method)) return json(res, 405, {error: "Unsupported pricing operation."});
+        if (serviceId && !db.services.some(service => service.id === serviceId)) return json(res, 404, {error: "Service not found"});
+        db.pricing = normalizePricing(serviceId ? {...db.pricing, [serviceId]: body} : (body.pricing || body), db.services);
+        if (!(await saveSuperAdminCollection("pricing"))?.ok) return json(res, 502, {error: "Pricing could not be saved."});
+        return json(res, 200, {pricing: db.pricing, config: db.config});
+      });
     }
 
     if (resource === "kiosk-services") {
@@ -5950,34 +5881,28 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
       return withServiceWrite(req, res, body, () => handleSuperAdminTemplate(req, res, pathParts, body));
     }
 
-    if (resource === "services") return withServiceWrite(req, res, body, () => handleSuperAdminCollection(req, res, resource, decodeSegment(pathParts[3] || ""), body));
+    if (["services", "kiosks", "projects", "kioskAdmins"].includes(resource)) return withServiceWrite(req, res, body, () => handleSuperAdminCollection(req, res, resource, decodeSegment(pathParts[3] || ""), body));
     return handleSuperAdminCollection(req, res, resource, decodeSegment(pathParts[3] || ""), body);
   }
 
   const adminSession = url.pathname.startsWith("/api/admin/") ? readAdminSession(req) : null;
 
-  if (req.method === "GET" && url.pathname === "/api/admin/idle-screensaver") {
-    const admin = findKioskAdminById(adminSession?.adminId);
-    if (!admin) return json(res, 404, { error: "Admin account not found." });
-    return json(res, 200, kioskAdminIdleScreensaverFields(admin));
-  }
-
-  if (req.method === "PUT" && url.pathname === "/api/admin/idle-screensaver") {
-    const admin = findKioskAdminById(adminSession?.adminId);
-    if (!admin) return json(res, 404, { error: "Admin account not found." });
-
-    // Whitelist-merge only the 4 idle-screensaver fields — this endpoint must
-    // never let a client touch anything else on their own account record
-    // (adminId, projectIds, status, ...), unlike the generic Super Admin PUT.
-    // Partial-update semantics: a field only changes if it was actually sent,
-    // so an omitted field keeps its saved value instead of being wiped.
-    if (body.idleMediaMode !== undefined) admin.idleMediaMode = normalizeIdleMediaMode(body.idleMediaMode);
-    if (body.idleImageUrls !== undefined) admin.idleImageUrls = normalizeIdleImageUrls(body.idleImageUrls);
-    if (body.idleVideoUrl !== undefined) admin.idleVideoUrl = normalizePublicAssetUrl(body.idleVideoUrl || "");
-    if (body.idleTimeoutSeconds !== undefined) admin.idleTimeoutSeconds = normalizeIdleTimeoutSeconds(body.idleTimeoutSeconds);
-    saveData();
-
-    return json(res, 200, kioskAdminIdleScreensaverFields(admin));
+  if (["GET", "PUT"].includes(req.method) && url.pathname === "/api/admin/idle-screensaver") {
+    return withServiceWrite(req, res, body, async () => {
+      const allowed = [...kioskIdsForAdmin(adminSession)];
+      const requested = normalizeKioskCode(url.searchParams.get("kioskId") || body.kioskId);
+      const kioskId = requested || (allowed.length === 1 ? allowed[0] : "");
+      const kiosks = kiosksForAdmin(adminSession).map(k => ({kioskId: k.kioskId, name: k.name}));
+      if (!kioskId) return json(res, req.method === "GET" ? 200 : 400, {kiosks, config: db.config, error: "Select one kiosk before editing its idle screen."});
+      if (!allowed.includes(kioskId)) return json(res, 403, {error: "This kiosk is outside your assignment."});
+      const kiosk = kioskForConfig(kioskId);
+      const admin = clientForKiosk(kiosk);
+      if (req.method === "PUT") {
+        kiosk.idleScreensaverSettings = {...kioskAdminIdleScreensaverFields({...idleSettingsForKiosk(admin, kiosk), ...body}), clientId: admin.adminId};
+        if (!(await saveSuperAdminCollection("kiosks"))?.ok) return json(res, 502, {error: "Idle settings could not be saved."});
+      }
+      return json(res, 200, {...kioskAdminIdleScreensaverFields(idleSettingsForKiosk(admin, kiosk)), kioskId, kiosks, config: db.config});
+    });
   }
 
   if (req.method === "GET" && url.pathname === "/api/admin/dashboard") {
@@ -6238,54 +6163,13 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/pricing") {
-    const adminServices = servicesForAdmin(adminSession);
-    const allowedServiceIds = new Set(adminServices.map((service) => service.id));
-    const allowedKioskIds = kioskIdsForAdmin(adminSession);
-    const requestedPricing = body.pricing || body;
-    const scopedPricing = {};
-    const scopedKioskPricing = {};
-
-    if (requestedPricing && typeof requestedPricing === "object") {
-      Object.entries(requestedPricing).forEach(([serviceId, rates]) => {
-        if (allowedServiceIds.has(serviceId)) {
-          scopedPricing[serviceId] = rates;
-        }
-      });
-
-      Object.entries(requestedPricing.__kiosks || {}).forEach(([rawKioskId, kioskPricing]) => {
-        const kioskId = normalizeKioskCode(rawKioskId);
-        if (!kioskId || !allowedKioskIds.has(kioskId) || !kioskPricing || typeof kioskPricing !== "object") return;
-
-        const scopedRates = {};
-        Object.entries(kioskPricing).forEach(([serviceId, rates]) => {
-          if (allowedServiceIds.has(serviceId)) {
-            scopedRates[serviceId] = rates;
-          }
-        });
-
-        if (Object.keys(scopedRates).length) {
-          scopedKioskPricing[kioskId] = scopedRates;
-        }
-      });
-    }
-
-    db.pricing = normalizePricing({
-      ...db.pricing,
-      ...scopedPricing,
-      __kiosks: {
-        ...(db.pricing.__kiosks || {}),
-        ...scopedKioskPricing
-      }
-    }, db.services);
-    db.services = db.services.map((service) => ({
-      ...service,
-      pricing: db.pricing[service.id] || service.pricing
-    }));
-    touchConfig("pricing-updated");
-    saveSettings();
-    saveData();
-    const scopedServices = servicesForAdmin(adminSession);
-    return json(res, 200, { pricing: pricingForServices(scopedServices, [...kioskIdsForAdmin(adminSession)]), services: scopedServices, config: db.config });
+    return withServiceWrite(req, res, body, async () => {
+      const allowed = [...kioskIdsForAdmin(adminSession)];
+      const kioskId = normalizeKioskCode(body.kioskId || (allowed.length === 1 ? allowed[0] : ""));
+      if (!kioskId) return json(res, 400, {error: "Select one kiosk before changing prices."});
+      if (!allowed.includes(kioskId)) return json(res, 403, {error: "This kiosk is outside your assignment."});
+      return writeKioskPricing(req, res, kioskId, body.rates || body.pricing || {});
+    });
   }
 
   if (req.method === "POST" && url.pathname === "/api/admin/services") {

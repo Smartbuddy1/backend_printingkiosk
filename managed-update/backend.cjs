@@ -34,7 +34,7 @@ async function handle(req,res,url,body,{db,validateSetup,validateDevice,save,jso
     try{keys();}catch(error){return send(503,{error:error.message});}
     const token=crypto.randomBytes(32).toString('hex'),old={...device.kiosk};
     Object.assign(device.kiosk,{managedUpdateTokenHash:digest(token),managedUpdateChannel:body.channel,managedUpdateEnabled:true,managedUpdateEnrolledAt:new Date().toISOString()});
-    if(!(await save())?.ok){Object.keys(device.kiosk).forEach(k=>delete device.kiosk[k]);Object.assign(device.kiosk,old);return send(502,{error:'Could not save updater enrollment'});}
+    if(!(await save(device.kiosk))?.ok){Object.keys(device.kiosk).forEach(k=>delete device.kiosk[k]);Object.assign(device.kiosk,old);return send(502,{error:'Could not save updater enrollment'});}
     return send(200,{ok:true,kioskId:device.kioskId,token,channel:body.channel});
   }
   const input=req.method==='GET'?Object.fromEntries(url.searchParams):body;
@@ -46,13 +46,13 @@ async function handle(req,res,url,body,{db,validateSetup,validateDevice,save,jso
   if(req.method==='GET'&&url.pathname.endsWith('/check')){
     let release;try{release=choose(db.releases,device.kiosk,input.currentVersion,input.channel);if(release)protocol.verifyManifest(release,keys());}catch(error){return send(503,{error:error.message});}
     device.kiosk.managedUpdateLastCheckAt=new Date().toISOString();device.kiosk.managedVersion=input.currentVersion;
-    if(!(await save())?.ok)return send(502,{error:'Could not save update check'});
+    if(!(await save(device.kiosk))?.ok)return send(502,{error:'Could not save update check'});
     return send(200,{updateAvailable:!!release,manifest:release?Object.fromEntries(['format','version','channel','downloadUrl','sha256','signature','signatureAlgorithm','signingKeyId','sizeBytes','releaseId'].map(k=>[k,release[k]])):null});
   }
   if(req.method==='POST'&&url.pathname.endsWith('/status')){
     if(!statuses.has(input.status))return send(400,{error:'Unknown update status'});
     Object.assign(device.kiosk,{managedVersion:input.currentVersion,managedUpdateStatus:input.status,managedUpdateTarget:String(input.targetVersion||'').slice(0,64),managedUpdateError:String(input.error||'').slice(0,300),managedUpdateLastCheckAt:new Date().toISOString()});
-    if(!(await save())?.ok)return send(502,{error:'Could not save update status'});
+    if(!(await save(device.kiosk))?.ok)return send(502,{error:'Could not save update status'});
     return send(200,{ok:true});
   }
   return send(404,{error:'Unknown updater operation'});

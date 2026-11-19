@@ -813,11 +813,11 @@ function persistDatabaseSnapshot(options = {}) {
 // alertLogs, instead of the entire jobs/payments/services/kiosks snapshot.
 // Shares databaseSaveQueue with the full snapshot save so the two can never
 // race each other against the same tables.
-function persistKioskHeartbeat(kiosks) {
+function persistKioskHeartbeat(kiosks, alertLogs = db.alertLogs) {
   if (!rdsStore.enabled()) return Promise.resolve({ ok: true });
 
   const kiosksSnapshot = JSON.parse(JSON.stringify(kiosks));
-  const alertLogsSnapshot = JSON.parse(JSON.stringify(db.alertLogs));
+  const alertLogsSnapshot = JSON.parse(JSON.stringify(alertLogs));
   const attempt = databaseSaveQueue.then(() => persistWithRetry(() => rdsStore.saveKioskHeartbeat(kiosksSnapshot, alertLogsSnapshot), "kiosk heartbeat"));
   databaseSaveQueue = attempt;
   return attempt;
@@ -859,10 +859,10 @@ function saveData(options = {}) {
 // regardless, so there's nothing worth optimizing. Accepts either one kiosk
 // or the full kiosks array (checkKioskTimeouts can change more than one per
 // sweep).
-function saveKioskHeartbeatData(kioskOrKiosks) {
+function saveKioskHeartbeatData(kioskOrKiosks, alertLogs = db.alertLogs) {
   const kiosks = Array.isArray(kioskOrKiosks) ? kioskOrKiosks : [kioskOrKiosks];
   const result = rdsStore.enabled()
-    ? persistKioskHeartbeat(kiosks)
+    ? persistKioskHeartbeat(kiosks, alertLogs)
     : (writeJsonAtomic(DATA_PATH, dataSnapshot()), Promise.resolve({ ok: true }));
 
   broadcastDataChanged();
@@ -4915,7 +4915,7 @@ const server = http.createServer(async (req, res) => {
 
   if (await require("./managed-update/backend.cjs").handle(req, res, url, body, {
     db, validateSetup: validateKioskActivationRequest, validateDevice: validateKioskDevice,
-    save: () => saveData(), json
+    save: kiosk => saveKioskHeartbeatData(kiosk, []), json
   })) return;
   if (req.method === "GET" && url.pathname === "/api/kiosk/update/manifest") {
     const validation = validateKioskDevice(Object.fromEntries(url.searchParams.entries()));
@@ -5179,7 +5179,7 @@ function kioskPrinterHealthAlerts(kiosk = {}) {
     kiosk.activatedAt = kiosk.activatedAt || isoNow();
     kiosk.activationDeviceId = existingDeviceId || activationDeviceId;
     kiosk.lastOnline = isoNow();
-    saveData();
+    if (!(await saveKioskHeartbeatData(kiosk, [])).ok) return json(res, 502, {error: "Could not persist kiosk activation."});
 
     return json(res, 200, {
       ok: true,

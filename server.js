@@ -4528,7 +4528,7 @@ let serviceWriteQueue = Promise.resolve();
 function withServiceWrite(req, res, body, action) {
   if (req.method === "GET") return action();
   const task = serviceWriteQueue.then(async () => {
-    const supplied = req.headers["x-kiosk-config-version"] ?? body?.expectedConfigVersion;
+    const supplied = req.headers["x-kiosk-config-version"] ?? body?.expectedConfigVersion ?? new URL(req.url, "http://localhost").searchParams.get("expectedConfigVersion");
     const createsService = req.method === "POST" && /^\/api\/super-admin\/(services|kiosks|projects|kioskAdmins)\/?(?:\?.*)?$/.test(req.url);
     if (supplied == null && !createsService) return json(res, 428, { error: "Reload settings before saving. This page is out of date.", code: "SERVICE_VERSION_REQUIRED" });
     if (supplied != null && (!Number.isSafeInteger(Number(supplied)) || Number(supplied) !== Number(db.config.version))) return json(res, 409, { error: "Settings changed in another window. Reload and reapply your edit.", code: "SERVICE_VERSION_CONFLICT", config: db.config });

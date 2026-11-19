@@ -113,36 +113,24 @@ async function loadSnapshot() {
 async function replaceCollection(client, collection, records = []) {
   const meta = collections[collection];
   await client.query(`DELETE FROM ${meta.table}`);
-
-  for (const record of records) {
-    const id = String(record?.[meta.keyField] || "").trim();
-    if (!id) continue;
-
-    await client.query(
-      `INSERT INTO ${meta.table} (${meta.keyColumn}, data, updated_at)
-       VALUES ($1, $2::jsonb, NOW())
-       ON CONFLICT (${meta.keyColumn})
-       DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [id, JSON.stringify(record)]
-    );
-  }
+  await upsertCollection(client, collection, records);
 }
 
 async function upsertCollection(client, collection, records = []) {
   const meta = collections[collection];
-
+  const byId = new Map();
   for (const record of records) {
     const id = String(record?.[meta.keyField] || "").trim();
-    if (!id) continue;
-
-    await client.query(
-      `INSERT INTO ${meta.table} (${meta.keyColumn}, data, updated_at)
-       VALUES ($1, $2::jsonb, NOW())
-       ON CONFLICT (${meta.keyColumn})
-       DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [id, JSON.stringify(record)]
-    );
+    if (id) byId.set(id, record);
   }
+  if (!byId.size) return;
+  await client.query(
+    `INSERT INTO ${meta.table} (${meta.keyColumn}, data, updated_at)
+     SELECT key, value, NOW() FROM jsonb_each($1::jsonb)
+     ON CONFLICT (${meta.keyColumn}) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
+     WHERE ${meta.table}.data IS DISTINCT FROM EXCLUDED.data`,
+    [JSON.stringify(Object.fromEntries(byId))]
+  );
 }
 
 async function saveSetting(client, key, data) {
